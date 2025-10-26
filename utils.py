@@ -3,6 +3,16 @@ import cv2
 import torch
 import numpy as np 
 
+def atanh(x: torch.Tensor):
+    return 0.5 * torch.log((1 + x) / (1 - x))
+
+def reparameterize(mu: torch.Tensor, std: torch.Tensor):
+    eps = torch.randn_like(std)
+
+    return mu + eps * std
+
+
+
 
 def to_tensor_obs(image: np.ndarray, size: tuple):
     
