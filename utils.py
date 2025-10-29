@@ -76,4 +76,4 @@ if __name__ == "__main__":
 
     x  = env.reset()
 
-    print(x, x.shape)
+    print( x.shape)

@@ -37,6 +37,9 @@ def run_random_policy(env, num_episodes: int = 10, max_steps: int = 500):
 
 if __name__ == "__main__":
     env = gym.make("Pendulum-v1", render_mode="human")
+    print(env.action_space)
+    print(env.observation_space)
+
     num_episodes = 10
     max_steps = 500
 
