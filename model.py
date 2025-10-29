@@ -261,3 +261,22 @@ class RSSM(nn.Module):
         }
 
         return out
+    
+
+
+
+class RewardModel(nn.Module):
+     
+    def __init__(self, in_dim: int, hidden_dim: int = 200) -> None:
+          self.mlp = nn.Sequential(
+               nn.Linear(in_dim, hidden_dim),
+               nn.ReLU(),
+               nn.Linear(hidden_dim, hidden_dim),
+               nn.ReLU(),
+               nn.Linear(hidden_dim, 1)
+          )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        
+        x = self.mlp(x)
+        return x 
