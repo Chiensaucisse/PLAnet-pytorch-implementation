@@ -14,6 +14,7 @@ def reparameterize(mu: torch.Tensor, std: torch.Tensor):
 
 
 def kl_divergence_diag(mu_q: torch.Tensor, std_q: torch.Tensor, mu_p: torch.Tensor, std_p: torch.Tensor ):
+
     var_q = std_q.pow(2)
     var_p = std_p.pow(2)
     k = mu_q.shape[-1]
@@ -36,7 +37,7 @@ def to_tensor_obs(image: np.ndarray, size: tuple):
 
 
 def compute_losses(rssm_out: dict,
-                   obervation_images: torch.Tensor,
+                   observation_images: torch.Tensor,
                    rewards_gt: torch.Tensor,
                    decoder,
                    reward_model,
@@ -53,12 +54,14 @@ def compute_losses(rssm_out: dict,
     B, L, D = latent_feats.shape
     squeeze_latent = latent_feats.view(B*L, -1)
     squeeze_decoded_obs = decoder(squeeze_latent)
-    decoded_obs = squeeze_decoded_obs.view(B, L, -1)
+    decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
     reconstructed = torch.sigmoid(decoded_obs)
-    reconstruction_loss  = F.mse_loss(reconstructed, obervation_images, reduction = 'none').mean([2,3,4]).sum(dim=1)
+
+    reconstruction_loss  = F.mse_loss(reconstructed, observation_images, reduction = 'none').mean([2,3,4]).sum(dim=1)
     reconstruction_loss = reconstruction_loss.mean() * recon_weight
 
-    reward_preds = reward_model(squeeze_latent).view(B,L)
+    reward_preds = reward_model(squeeze_latent).view(B,L)[:,:-1]
+
     reward_loss = F.mse_loss(reward_preds, rewards_gt, reduce= 'mean') * reward_weight
 
     mu_qs = rssm_out['mu_qs']

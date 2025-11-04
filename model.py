@@ -34,7 +34,7 @@ class ConvEncoder(nn.Module):
     def forward(self, img):
 
         x = self.net(img)
-        x = x.flatten(dim = 1)
+        x = x.flatten(1)
         return self.fc(x)
     
 
@@ -59,6 +59,7 @@ class ConvDecoder(nn.Module):
         )
 
     def forward(self, x):
+
         x = self.fc(x)
         x = x.view(x.shape[0], 256, 4, 4)
         x = self.upnet(x)
@@ -105,7 +106,7 @@ class RSSM(nn.Module):
 
     def init_state(self, batch_size: int, device: str = None) -> dict:
             h = torch.zeros((batch_size, self.deter), device = device)
-            s = torch.zeros((batch_size, self.deter), device = device)
+            s = torch.zeros((batch_size, self.stoch), device = device)
             return {'h': h, 's': s}
     
     
@@ -119,7 +120,8 @@ class RSSM(nn.Module):
         return mu_p, std_p
 
     def posterior(self, obs_feat: torch.Tensor, h: torch.Tensor) -> Tuple[torch.Tensor]:
-        params = self.post_net(obs_feat, h)
+        state = torch.cat([obs_feat, h], dim = -1)
+        params = self.post_net(state)
         mu_q, pre_std_q = params.split(self.stoch, dim  = -1)
         std_q = F.softplus(pre_std_q) + 1e-5
         std_q = std_q.clamp(min=1e-4)
@@ -190,6 +192,8 @@ class RSSM(nn.Module):
                 ss = []
                 s_embeds = []
                 hs = []
+                hs.append(prev_h)
+                ss.append(prev_s)
 
                 for l in range(L):
                      obs_feat = obs_feats[:, l]
@@ -199,11 +203,12 @@ class RSSM(nn.Module):
                      std_ps.append(out['std_p'])
                      mu_qs.append(out['mu_q'])
                      std_qs.append(out ['std_q'])
-                     ss.append(out['s'])
+                     
                      
                      h = out['h']
                      s = out['s']
                      hs.append(h)
+                     ss.append(s)
                      s_embeds.append(s)
 
                      prev_h = h
@@ -213,7 +218,7 @@ class RSSM(nn.Module):
                      'mu_ps': torch.stack(mu_ps, dim = 1),
                      'std_ps': torch.stack(std_ps, dim = 1),
                      'mu_qs': torch.stack(mu_qs, dim = 1),
-                     'std_qs': torch.stack(std_qs, dim = -1),
+                     'std_qs': torch.stack(std_qs, dim = 1),
                      'ss': torch.stack(ss, dim = 1),
                      'hs': torch.stack(hs, dim = 1)
                 }
@@ -224,7 +229,7 @@ class RSSM(nn.Module):
                       actions: torch.Tensor,
                       init_state: torch.Tensor = None) -> dict:
         
-        B, L, _ = actions.shape
+        B, H, _ = actions.shape
         if init_state is None:
                 init_state = self.init_state(B, device = actions.device)
         
@@ -237,9 +242,9 @@ class RSSM(nn.Module):
         s_embeds = []
         hs = []
 
-        for l in range(L):
+        for t in range(H):
 
-                action = actions[:, l]
+                action = actions[:, t]
                 out = self.imagine_step(prev_h, prev_s, action)
                 mu_ps.append(out['mu_p'])
                 std_ps.append(out['std_p'])
@@ -268,6 +273,7 @@ class RSSM(nn.Module):
 class RewardModel(nn.Module):
      
     def __init__(self, in_dim: int, hidden_dim: int = 200) -> None:
+          super().__init__()
           self.mlp = nn.Sequential(
                nn.Linear(in_dim, hidden_dim),
                nn.ReLU(),

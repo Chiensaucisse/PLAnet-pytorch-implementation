@@ -29,8 +29,8 @@ class ReplayBuffer():
         for episode in episodes:
             
             observations  = episode['observations'] # T + 1
-            rewards  = episode['reward'] # T
-            actions = episode['action'] # T 
+            rewards  = episode['rewards'] # T
+            actions = episode['actions'] # T 
 
             T = len(actions)
             if  T < chunk_length:
@@ -47,7 +47,7 @@ class ReplayBuffer():
             rewards_batch.append(rew_seq)
         
         obs_batch = torch.stack(obs_batch, dim = 0).to(device=self.device)
-        act_batch = torch.stack(act_batch, dim = 0).to(device=self.device)
+        act_batch = torch.stack(actions_batch, dim = 0).to(device=self.device)
         rewards_batch = torch.stack(rewards_batch, dim = 0).to(device=self.device)
         
         return {
