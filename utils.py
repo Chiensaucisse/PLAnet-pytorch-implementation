@@ -38,7 +38,6 @@ def to_tensor_obs(image: np.ndarray, size: tuple):
 def compute_losses(rssm_out: dict,
                    obervation_images: torch.Tensor,
                    rewards_gt: torch.Tensor,
-                   encoder,
                    decoder,
                    reward_model,
                    kl_free_nats = 3.0,

@@ -3,7 +3,7 @@ import torch
 from torch import nn 
 import numpy
 from memory import ReplayBuffer
-from model import RSSM
+from model import RSSM, RewardModel, ConvEncoder, ConvDecoder
 from tqdm import tqdm
 from utils import *
 
@@ -39,7 +39,7 @@ def populate_random(env: gym.Env, buffer: ReplayBuffer,  num_episodes: int = 10)
     
         observations_t = torch.stack(observations_list, dim = 0)
         actions_t = torch.stack(actions_list, dim = 0)
-        rewards_t  =torch.stack(rewards_list, dim = 0)
+        rewards_t  = torch.stack(rewards_list, dim = 0)
 
         episode = {
             "observations": observations_t,
@@ -48,6 +48,45 @@ def populate_random(env: gym.Env, buffer: ReplayBuffer,  num_episodes: int = 10)
         }
         buffer.add_episode(episode)
 
+def fit_rssm(
+        rssm_model: RSSM,
+        reward_model: nn.Module,
+        encoder: nn.Module,
+        decoder: nn.Module,
+        batch: dict,
+        optimizer
+    ) -> None:
+
+
+    observations_image = batch['observations']
+    actions =  batch['actions']
+    rewards = batch['rewards']
+
+    obs_feat = encoder(observations_image)
+
+    rssm_out = rssm_model.forward_observe(
+        obs_feats= obs_feat,
+        actions= actions,
+        init_state = None,
+    )
+
+    losses = compute_losses(
+        rssm_out,
+        observations_image,
+        rewards,
+        decoder,
+        reward_model
+    )
+
+    total_loss = losses['total_loss']
+
+    optimizer.zero_grad()
+    total_loss.backward()
+    optimizer.step()
+
+    losses['total_loss'] = total_loss.detach()
+
+    return losses
 
 
 def train(rssm_model: nn.Module,
