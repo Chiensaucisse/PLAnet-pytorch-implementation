@@ -62,6 +62,7 @@ def compute_losses(rssm_out: dict,
 
     reward_preds = reward_model(squeeze_latent).view(B,L)[:,:-1]
 
+    ### pas de reparametrize ici ??  
     reward_loss = F.mse_loss(reward_preds, rewards_gt, reduce= 'mean') * reward_weight
 
     mu_qs = rssm_out['mu_qs']

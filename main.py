@@ -7,6 +7,7 @@ from memory import ReplayBuffer
 from model import RSSM, RewardModel, ConvEncoder, ConvDecoder
 from tqdm import tqdm
 from utils import *
+from planner2 import planner
 
 
 
@@ -123,8 +124,27 @@ def train(rssm_model: nn.Module,
           encoder: nn.Module,
           decoder: nn.Module,
           optim,
+          env : TorchImageEnv,
+          device
            ):
+    '''
+    Train RSSM model for one iteration
 
+    Args:
+        rssm_model (nn.Module): The RSSM model to be trained
+        reward_model (nn.Module): The reward model
+        C (int): Update steps
+        R (int): Action repeat
+        T (int): Time horizon for planning
+        L (int): Chunk length
+        batch_size (int): Batch size for training
+        buffer (ReplayBuffer): Replay buffer to sample training data from
+        encoder (nn.Module): Encoder model for observations
+        decoder (nn.Module): Decoder model for observations
+        optim: Optimizer for training the models
+    Returns:
+        None
+    '''
 
 
     episode_states  = []
@@ -141,14 +161,15 @@ def train(rssm_model: nn.Module,
             optim,
             )
     print(losses)
-    exit()
+    # exit()
 
     x = env.reset()
     terminated = False
 
     while terminated == False:
-        action = planner(rssm_model,        # TO DO
-                        ...)
+        action = planner(rssm_model, reward_model, device= device)
+        print(action)
+        exit()
         expl_noise = torch.normal() # to do
         action  = action + expl_noise
 
@@ -217,6 +238,8 @@ def main(cfg):
             encoder,
             decoder,
             optimizer,
+            env,
+            device
         )
 
 
