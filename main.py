@@ -7,8 +7,9 @@ from memory import ReplayBuffer
 from model import RSSM, RewardModel, ConvEncoder, ConvDecoder
 from tqdm import tqdm
 from utils import *
-from planner2 import planner
-
+from planner import planner
+from queue import deque
+from torch.utils.tensorboard import SummaryWriter
 
 
 def get_parser():
@@ -29,6 +30,7 @@ def get_parser():
     parser.add_argument("--S", type=int, default=5, help="Seed episodes")
     parser.add_argument("--T", type=int, default=15, help="Sequence length for training")
     parser.add_argument("--L", type=int, default=50, help="Sequence length for training")
+    parser.add_argument("--eps", type=int, default=0.1, help="Small gaussian exploration noise")
 
     return parser
 
@@ -119,6 +121,7 @@ def train(rssm_model: nn.Module,
           R: int,
           T: int,
           L: int,
+          expl_noise: int,
           batch_size: int,
           buffer: ReplayBuffer,
           encoder: nn.Module,
@@ -160,23 +163,22 @@ def train(rssm_model: nn.Module,
             batch, 
             optim,
             )
-    print(losses)
-    # exit()
+
 
     x = env.reset()
     terminated = False
 
     while terminated == False:
-        action = planner(rssm_model, reward_model, device= device)
-        print(action)
-        exit()
-        expl_noise = torch.normal() # to do
-        action  = action + expl_noise
-
+        action = planner(rssm_model, reward_model, device = device)
+        expl_noise_tensor = expl_noise * torch.randn_like(action)
+        action  = action + expl_noise_tensor
+        action = torch.clamp(action, min = -2.0, max= 2.0)
+    
         reward = 0
         for _ in range(R):
-            y, r, d, t,_ =  env.step(action)
-            reward += R
+            print(action.cpu().item())
+            y, r, d, t,_ =  env.step(action.cpu().item())
+            reward += r
             x  = y
             terminated = d | t 
             if terminated:
@@ -202,6 +204,8 @@ def train(rssm_model: nn.Module,
     }
     buffer.add_episode(episode)
 
+    return losses, np.sum(episodes_rewards)
+
 
 
 def main(cfg):
@@ -225,15 +229,19 @@ def main(cfg):
 
     populate_random(env, buffer, num_episodes = cfg.S)
 
+    episode_rewards = deque(maxlen = 100)
+    writer = SummaryWriter(log_dir="runs/planet_pendulum")
+
     for step in range(cfg.num_train_step):
-        train(
+        losses, ep_reward = train(
             rssm_model,
             reward_model,
             cfg.C,
             cfg.R,
             cfg.T,
             cfg.L,
-            cfg.batch_size,  
+            cfg.eps,
+            cfg.batch_size,
             buffer,
             encoder,
             decoder,
@@ -241,6 +249,15 @@ def main(cfg):
             env,
             device
         )
+        episode_rewards.append(ep_reward)
+
+        for key, value in losses.items():
+            value = value.item()
+            writer.add_scalar(f"Loss/{key}", value, step)
+        
+        writer.add_scalar(f"Reward/mean_reward",np.mean(episode_rewards), step)
+        if step % 100 == 0:
+            print(f"Mean reward: {np.mean(episode_rewards)}")
 
 
 
