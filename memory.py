@@ -23,7 +23,8 @@ class ReplayBuffer():
         self.buffer.append(episode)
 
     def sample(self, batch_size: int, chunk_length: int) -> dict:
-        episodes = random.sample(self.buffer, batch_size)
+        
+        episodes = random.sample(self.buffer, min(batch_size, len(self.buffer)))
         obs_batch, rewards_batch, actions_batch = [], [], []
 
         for episode in episodes:

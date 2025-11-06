@@ -1,4 +1,5 @@
 import argparse
+import os
 import gymnasium as gym
 import torch
 from torch import nn 
@@ -34,10 +35,32 @@ def get_parser():
 
     return parser
 
-def populate_random(env: TorchImageEnv, buffer: ReplayBuffer,  num_episodes: int = 10):
+def visualize_episode(env: TorchImageEnv, rssm_model: nn.Module, reward_model: nn.Module, device = None, R: int = 4) -> None:
+    x = env.reset()
+    terminated = False
 
+    while terminated == False:
+        action = planner(rssm_model, reward_model, device = device)
+        action = torch.clamp(action, min = -2.0, max= 2.0)
+    
+        reward = 0
+        for _ in range(R):
+            print('-------------------la')
+            env.render()
+            y, r, d, t,_ =  env.step(action.cpu().numpy())
+            reward += r
+            x  = y
+            terminated = d | t 
+            if terminated:
+                break
 
     
+
+
+
+
+
+def populate_random(env: TorchImageEnv, buffer: ReplayBuffer,  num_episodes: int = 10):
 
     for episode in tqdm(range(num_episodes), desc="Populating with random policy"):
         state  = env.reset()
@@ -84,8 +107,12 @@ def fit_rssm(
 
 
     observations_image = batch['observations']
+    print(observations_image)
     actions =  batch['actions']
+    print(actions)
     rewards = batch['rewards']
+    print(rewards)
+
     B, L, C, H, W = observations_image.shape
     observations_image_squeezed = observations_image.view(B * L, C, H, W)
     obs_feat = encoder(observations_image_squeezed)
@@ -176,8 +203,7 @@ def train(rssm_model: nn.Module,
     
         reward = 0
         for _ in range(R):
-            print(action.cpu().item())
-            y, r, d, t,_ =  env.step(action.cpu().item())
+            y, r, d, t,_ =  env.step(action.cpu().numpy())
             reward += r
             x  = y
             terminated = d | t 
@@ -185,9 +211,9 @@ def train(rssm_model: nn.Module,
                 break
         next_state  = x
 
-        episode_states.append(x)
-        episode_actions.append(action)
-        episodes_rewards.append(reward)
+        episode_states.append(x.cpu())
+        episode_actions.append(action.cpu())
+        episodes_rewards.append(torch.tensor(reward, dtype= torch.float32))
 
         if terminated:
             episode_states.append(next_state)
@@ -231,8 +257,10 @@ def main(cfg):
 
     episode_rewards = deque(maxlen = 100)
     writer = SummaryWriter(log_dir="runs/planet_pendulum")
+    save_path = "weights/"
+    os.makedirs(save_path, exist_ok= True)
 
-    for step in range(cfg.num_train_step):
+    for step in tqdm(range(cfg.num_train_step), desc= f'Step:'):
         losses, ep_reward = train(
             rssm_model,
             reward_model,
@@ -256,8 +284,10 @@ def main(cfg):
             writer.add_scalar(f"Loss/{key}", value, step)
         
         writer.add_scalar(f"Reward/mean_reward",np.mean(episode_rewards), step)
-        if step % 100 == 0:
+        if step % 1 == 0:
             print(f"Mean reward: {np.mean(episode_rewards)}")
+            save_model(save_path, rssm_model, reward_model, encoder, decoder)
+            visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, device= device)
 
 
 

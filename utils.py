@@ -1,8 +1,11 @@
 import gymnasium as gym
 import cv2
 import torch
-import numpy as np 
+import numpy as np
+from torch import nn
 import torch.nn.functional as F
+from pathlib import Path
+import matplotlib.pyplot as plt
 
 def atanh(x: torch.Tensor):
     return 0.5 * torch.log((1 + x) / (1 - x))
@@ -36,6 +39,36 @@ def to_tensor_obs(image: np.ndarray, size: tuple):
     return image
 
 
+def plot_reconstructed(renconstructed_img, tgt_image):
+
+    idx = 0
+    recon_seq = renconstructed_img[idx].detach().cpu()
+    target_seq = tgt_image[idx].detach().cpu()
+    L = recon_seq.shape[0]
+
+   
+    fig, axs = plt.subplots(2, L, figsize=(3 * L, 6))
+
+    for t in range(L):
+     
+        recon_np = recon_seq[t].permute(1, 2, 0).numpy()
+        target_np = target_seq[t].permute(1, 2, 0).numpy()
+        
+    
+        axs[0, t].imshow(target_np)
+        axs[0, t].set_title(f"Target t={t}")
+        axs[0, t].axis("off")
+        
+        axs[1, t].imshow(recon_np)
+        axs[1, t].set_title(f"Recon t={t}")
+        axs[1, t].axis("off")
+
+    plt.tight_layout()
+    plt.savefig(f"debug/reconstruction_seq_batch{idx}.png", bbox_inches="tight", dpi=300)
+    plt.close(fig)
+
+
+
 def compute_losses(rssm_out: dict,
                    observation_images: torch.Tensor,
                    rewards_gt: torch.Tensor,
@@ -57,6 +90,8 @@ def compute_losses(rssm_out: dict,
     decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
     reconstructed = torch.sigmoid(decoded_obs)
 
+    if True:
+        plot_reconstructed(reconstructed, observation_images)
     reconstruction_loss  = F.mse_loss(reconstructed, observation_images, reduction = 'none').mean([2,3,4]).sum(dim=1)
     reconstruction_loss = reconstruction_loss.mean() * recon_weight
 
@@ -127,7 +162,20 @@ class TorchImageEnv:
     
 
 
-
+def save_model(save_root: str,
+               rssm_model: nn.Module,
+               reward_model: nn.Module,
+               encoder: nn.Module,
+               decoder: nn.Module) -> None:
+    
+    checkpoint = {
+        'rssm_model_state_dict': rssm_model.state_dict(),
+        'reward_model_state_dict': reward_model.state_dict(),
+        'encoder_state_dict': encoder.state_dict(),
+        'decoder_state_dict': decoder.state_dict()
+    }
+    save_path = Path(save_root) / 'checkpoint.pth'
+    torch.save(checkpoint, save_path)
 
 
 
@@ -137,4 +185,4 @@ if __name__ == "__main__":
 
     x  = env.reset()
 
-    print( x.shape)
+    print(x.shape)
