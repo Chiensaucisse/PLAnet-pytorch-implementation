@@ -35,25 +35,31 @@ def get_parser():
 
     return parser
 
-def visualize_episode(env: TorchImageEnv, rssm_model: nn.Module, reward_model: nn.Module, device = None, R: int = 4) -> None:
+def visualize_episode(env: TorchImageEnv, rssm_model: nn.Module, reward_model: nn.Module, encoder: nn.Module, device = None, R: int = 4) -> None:
     x = env.reset()
+    env_human = gym.make('Pendulum-v1', render_mode = "human")
+    _,_ = env_human.reset()
+    x = x.to(device)
+    x = x.unsqueeze(0)
+    obs_feat = encoder(x)
     terminated = False
 
     while terminated == False:
-        action = planner(rssm_model, reward_model, device = device)
+        action = planner(rssm_model, reward_model, obs_feat,  device = device)
         action = torch.clamp(action, min = -2.0, max= 2.0)
     
         reward = 0
         for _ in range(R):
-            print('-------------------la')
-            env.render()
+            env_human.render()
             y, r, d, t,_ =  env.step(action.cpu().numpy())
+            env_human.step(action.cpu().numpy())
+            
             reward += r
             x  = y
             terminated = d | t 
             if terminated:
                 break
-
+    env_human.close()
     
 
 
@@ -105,6 +111,10 @@ def fit_rssm(
         optimizer
     ) -> dict:
 
+    reward_model.train()
+    encoder.train()
+    decoder.train()
+    rssm_model.train()
 
     observations_image = batch['observations']
     actions =  batch['actions']
@@ -118,7 +128,6 @@ def fit_rssm(
     rssm_out = rssm_model.forward_observe(
         obs_feats= obs_feat,
         actions= actions,
-        init_state = None,
     )
 
     losses = compute_losses(
@@ -173,7 +182,7 @@ def train(rssm_model: nn.Module,
         None
     '''
 
-
+    
     episode_states  = []
     episode_actions = []
     episodes_rewards = []
@@ -188,11 +197,16 @@ def train(rssm_model: nn.Module,
             optim,
             )
 
+    reward_model.eval()
+    encoder.eval()
+    decoder.eval()
+    rssm_model.eval()
 
     x = env.reset()
     x = x.to(device)
     x = x.unsqueeze(0)
-    obs_feat = encoder(x)
+    with torch.no_grad():
+        obs_feat = encoder(x)
     terminated = False
 
     while terminated == False:
@@ -287,7 +301,7 @@ def main(cfg):
         if step % 1 == 0:
             print(f"Mean reward: {np.mean(episode_rewards)}")
             save_model(save_path, rssm_model, reward_model, encoder, decoder)
-            # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, device= device)
+            # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
 
 
 

@@ -10,10 +10,9 @@ def planner(rssm, reward_model, obs_feat, iterations=10, H=12, num_candidates=10
 
     with torch.no_grad(): 
 
-        state = rssm.init_state(1, device)
+        state = rssm.init_state(obs_feat)
+        s = state['s']
         h = state['h']
-        mu_q, std_q = rssm.posterior(obs_feat, h)
-        s = reparameterize(mu_q, std_q)
         s = s.repeat((num_candidates, 1))
         h = h.repeat((num_candidates, 1))
         state['s'] = s

@@ -15,18 +15,18 @@ class ConvEncoder(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Conv2d(in_channels, 32, 4, stride= 2, padding= 1), #32 x 32
+            nn.Conv2d(in_channels, 32, 4, stride= 2), #32 x 32
             nn.ReLU(),
-            nn.Conv2d(32, 64, 4, stride= 2, padding= 1), #16 x 16
+            nn.Conv2d(32, 64, 4, stride= 2), #16 x 16
             nn.ReLU(),
-            nn.Conv2d(64, 128, 4, stride= 2, padding= 1), #8 x 8
+            nn.Conv2d(64, 128, 4, stride= 2), #8 x 8
             nn.ReLU(),
-            nn.Conv2d(128, 256, 4, stride= 2, padding= 1), #4 x 4
+            nn.Conv2d(128, 256, 4, stride= 2), # 2 x 2
             nn.ReLU(),
         )
 
         self.fc = nn.Sequential(
-            nn.Linear(256*4*4, out_dim),
+            nn.Linear(1024, out_dim),
             nn.ReLU()
         )
 
@@ -34,7 +34,7 @@ class ConvEncoder(nn.Module):
     def forward(self, img):
 
         x = self.net(img)
-        x = x.flatten(1)
+        x = x.view(x.shape[0], -1)
         return self.fc(x)
     
 
@@ -44,24 +44,24 @@ class ConvDecoder(nn.Module):
         super().__init__()
 
         self.upnet = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, 4, stride = 2, padding = 1), #8 x 8
+            nn.ConvTranspose2d(1024, 128, 5, stride = 2), #8 x 8
             nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, 4, stride = 2, padding = 1), #16 x 16
+            nn.ConvTranspose2d(128, 64, 5, stride = 2), #16 x 16
             nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 4, stride = 2, padding = 1), #32 x 32
+            nn.ConvTranspose2d(64, 32, 6, stride = 2), #32 x 32
             nn.ReLU(),
-            nn.ConvTranspose2d(32, out_channels, 4, stride = 2, padding = 1), #64 x 64
+            nn.ConvTranspose2d(32, out_channels, 6, stride = 2), #64 x 64
         )
 
         self.fc = nn.Sequential(
-            nn.Linear(in_dim, 256 * 4 * 4),
+            nn.Linear(in_dim, 1024),
             nn.ReLU()
         )
 
     def forward(self, x):
 
         x = self.fc(x)
-        x = x.view(x.shape[0], 256, 4, 4)
+        x = x.view(-1, 1024, 1, 1)
         x = self.upnet(x)
         return x 
     
@@ -84,6 +84,9 @@ class RSSM(nn.Module):
 
         gru_input_size = self.stoch + action_size
         self.gru  = nn.GRUCell(gru_input_size, deter_size)
+        self.latent_act_layer = nn.Sequential(
+            nn.Linear(gru_input_size, gru_input_size),
+            nn.ReLU())
 
         self.prior_net = nn.Sequential(
             nn.Linear(deter_size, hidden),
@@ -104,9 +107,17 @@ class RSSM(nn.Module):
 
 
 
-    def init_state(self, batch_size: int, device: str = None) -> dict:
-            h = torch.zeros((batch_size, self.deter), device = device)
-            s = torch.zeros((batch_size, self.stoch), device = device)
+    def init_state(self, obs_feat: nn.Module, h: torch.Tensor = None, s: torch.Tensor = None, a: torch.Tensor = None) -> dict:
+            B, device = obs_feat.shape[0], obs_feat.device
+            if len(obs_feat.shape) > 2:
+                 obs_feat = obs_feat[:, 0, :]
+            h = torch.zeros((B, self.deter), device = device) if h is None else h
+            s = torch.zeros((B, self.stoch), device = device) if s is None else s
+            a = torch.zeros((B, self.action_size), device = device) if a is None else a
+            gru_input = self.latent_act_layer(torch.cat([s, a], dim = 1))
+            h = self.gru(gru_input, h)
+            mu_p, std_p = self.posterior(obs_feat, h)
+            s = reparameterize(mu_p, std_p)
             return {'h': h, 's': s}
     
     
@@ -134,7 +145,7 @@ class RSSM(nn.Module):
                      prev_s: torch.Tensor,
                      action: torch.Tensor) -> dict:
         
-        gru_input = torch.cat([prev_s, action], dim = 1)
+        gru_input = self.latent_act_layer(torch.cat([prev_s, action], dim = 1))
         h = self.gru(gru_input, prev_h)
         mu_p, std_p = self.prior(h)
         mu_q, std_q = self.posterior(obs_feat, h)
@@ -145,7 +156,7 @@ class RSSM(nn.Module):
         out = {
             'mu_p': mu_p,
             'std_p': std_p,
-            'mu_q': std_q,
+            'mu_q': mu_q,
             'std_q': std_q,
             's': s,
             's_embed': s_embed,
@@ -159,29 +170,26 @@ class RSSM(nn.Module):
                      prev_s: torch.Tensor,
                      action: torch.Tensor,
                      ) -> dict:
-        gru_input = torch.cat([prev_s, action], dim = -1)
+        gru_input = self.latent_act_layer(torch.cat([prev_s, action], dim = -1))
         h = self.gru(gru_input, prev_h)
         mu_p, std_p = self.prior(h)
         s = reparameterize(mu_p, std_p)
-        s_embed = self.to_next_s(s)
+        # s_embed = self.to_next_s(s)
         out =  {
             'mu_p': mu_p,
             'std_p': std_p,
             's': s,
-            's_embed': s_embed,
+            # 's_embed': s_embed,
             'h': h
         }
         return out
 
     def forward_observe(self, 
                         obs_feats: torch.Tensor,
-                        actions: torch.Tensor,
-                        init_state: torch.Tensor = None) -> dict:
+                        actions: torch.Tensor) -> dict:
                 
                 B, L, _ = actions.shape
-                if init_state is None:
-                     init_state = self.init_state(B, device = actions.device)
-                
+                init_state = self.init_state(obs_feat= obs_feats)
                 prev_h = init_state['h']
                 prev_s = init_state['s']
 
@@ -230,8 +238,6 @@ class RSSM(nn.Module):
                       init_state: torch.Tensor = None) -> dict:
         
         B, H, _ = actions.shape
-        if init_state is None:
-                init_state = self.init_state(B, device = actions.device)
         
         prev_h = init_state['h']
         prev_s = init_state['s']
