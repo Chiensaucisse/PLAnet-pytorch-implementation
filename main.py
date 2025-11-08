@@ -205,13 +205,18 @@ def train(rssm_model: nn.Module,
     rssm_model.eval()
 
     x = env.reset()
-    x = x.to(device)
-    x = x.unsqueeze(0)
-    with torch.no_grad():
-        obs_feat = encoder(x)
+    next_state  = x
+    # x = x.to(device)
+    # x = x.unsqueeze(0)
+    # with torch.no_grad():
+    #     obs_feat = encoder(x)
     terminated = False
 
     while terminated == False:
+        next_state = next_state.to(device)
+        next_state = next_state.unsqueeze(0)
+        with torch.no_grad():
+            obs_feat = encoder(next_state)
         action = planner(rssm_model, reward_model, obs_feat, device = device)
         expl_noise_tensor = expl_noise * torch.randn_like(action)
         action  = action + expl_noise_tensor
