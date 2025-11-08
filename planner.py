@@ -1,7 +1,7 @@
 import torch
 from utils import reparameterize
 
-def planner(rssm, reward_model, obs_feat, iterations=10, H=12, num_candidates=1000, topk=100, action_low = -2, action_high=2, device=None):
+def planner(rssm, reward_model, cur_state_belief, iterations=10, H=12, num_candidates=1000, topk=100, action_low = -2, action_high=2, device=None):
 
     action_size = rssm.action_size
 
@@ -10,9 +10,10 @@ def planner(rssm, reward_model, obs_feat, iterations=10, H=12, num_candidates=10
 
     with torch.no_grad(): 
 
-        state = rssm.init_state(obs_feat)
-        s = state['s']
-        h = state['h']
+        # state = rssm.init_state(obs_feat)
+        state = {}
+        s = cur_state_belief['s']
+        h = cur_state_belief['h']
         s = s.repeat((num_candidates, 1))
         h = h.repeat((num_candidates, 1))
         state['s'] = s

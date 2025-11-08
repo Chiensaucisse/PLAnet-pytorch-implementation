@@ -119,7 +119,7 @@ def fit_rssm(
 
     B, L, C, H, W = observations_image.shape
     observations_image_squeezed = observations_image.view(B * L, C, H, W)
-    obs_feat = encoder(observations_image_squeezed)
+    obs_feat = encoder(observations_image_squeezed) # shape: (B*L, obs_feat_dim)
     obs_feat = obs_feat.view(B, L, -1)
     
     rssm_out = rssm_model.forward_observe(
@@ -205,19 +205,43 @@ def train(rssm_model: nn.Module,
     rssm_model.eval()
 
     x = env.reset()
-    next_state  = x
+    obs  = x
+    action = None
     # x = x.to(device)
     # x = x.unsqueeze(0)
     # with torch.no_grad():
     #     obs_feat = encoder(x)
     terminated = False
+    obs_feat_past = []
+    actions_past = []
+    
 
     while terminated == False:
-        next_state = next_state.to(device)
-        next_state = next_state.unsqueeze(0)
+        obs = obs.to(device)
+        obs = obs.unsqueeze(0)
+
         with torch.no_grad():
-            obs_feat = encoder(next_state)
-        action = planner(rssm_model, reward_model, obs_feat, device = device)
+            obs_feat = encoder(obs) # shape: (1, obs_feat_dim)
+            obs_feat_unsqueezed = obs_feat.unsqueeze(0)
+            obs_feat_past.append(obs_feat_unsqueezed)
+            obs_feat_past_tensor = torch.cat(obs_feat_past, dim=1)
+        
+        if action is not None:
+            actions_past.append(action.unsqueeze(0).unsqueeze(0))
+            actions_past_tensor = torch.cat(actions_past, dim=1)
+            with torch.no_grad():
+                out = rssm_model.forward_observe(
+                    obs_feat_past_tensor,
+                    actions_past_tensor,
+                )
+                hs = out['hs']
+                ss = out['ss']
+                cur_state_belief = {'h':torch.unbind(hs, dim=1)[-1], 's':torch.unbind(ss, dim=1)[-1]}
+        else:
+            with torch.no_grad():
+                cur_state_belief = rssm_model.init_state(obs_feat)
+
+        action = planner(rssm_model, reward_model, cur_state_belief, device = device)
         expl_noise_tensor = expl_noise * torch.randn_like(action)
         action  = action + expl_noise_tensor
         action = torch.clamp(action, min = -2.0, max= 2.0)
@@ -230,14 +254,14 @@ def train(rssm_model: nn.Module,
             terminated = d | t 
             if terminated:
                 break
-        next_state  = x
+        obs = x
 
-        episode_states.append(x.cpu())
+        episode_states.append(obs.cpu())
         episode_actions.append(action.cpu())
         episodes_rewards.append(torch.tensor(reward, dtype= torch.float32))
 
         if terminated:
-            episode_states.append(next_state)
+            episode_states.append(obs)
     
 
     observations_t = torch.stack(episode_states, dim = 0)
