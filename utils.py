@@ -96,16 +96,18 @@ def compute_losses(rssm_out: dict,
     squeeze_latent = latent_feats.view(B*L, -1)
     squeeze_decoded_obs = decoder(squeeze_latent)
     decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
-    reconstructed = torch.sigmoid(decoded_obs)
+ 
+    reconstructed = decoded_obs # torch.sigmoid(decoded_obs)
 
     # if True:
     #     plot_reconstructed(reconstructed, observation_images)
-    reconstruction_loss  = F.mse_loss(reconstructed, observation_images, reduction = 'none').mean([2,3,4]).sum(dim=1)
-    reconstruction_loss = reconstruction_loss.mean() * recon_weight
 
-    reward_preds = reward_model(squeeze_latent).view(B,L)[:,:-1]
+    reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
+    reconstruction_loss *=  recon_weight
 
-    ### pas de reparametrize ici ??  
+    reward_preds = reward_model(squeeze_latent).view(B,L)
+
+
     reward_loss = F.mse_loss(reward_preds, rewards_gt, reduce= 'mean') * reward_weight
 
     mu_qs = rssm_out['mu_qs']
@@ -121,9 +123,9 @@ def compute_losses(rssm_out: dict,
 
     return {
         "total_loss": total_loss,
-        "recon_loss": reconstruction_loss.detach(),
-        "reward_loss": reward_loss.detach(),
-        "kl_loss": kl_loss.detach()
+        "recon_loss": reconstruction_loss.item(),
+        "reward_loss": reward_loss.item(),
+        "kl_loss": kl_loss.item()
     }
 
 

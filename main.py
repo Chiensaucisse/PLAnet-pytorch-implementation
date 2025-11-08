@@ -116,12 +116,11 @@ def fit_rssm(
     observations_image = batch['observations']
     actions =  batch['actions']
     rewards = batch['rewards']
-
     B, L, C, H, W = observations_image.shape
     observations_image_squeezed = observations_image.view(B * L, C, H, W)
     obs_feat = encoder(observations_image_squeezed) # shape: (B*L, obs_feat_dim)
     obs_feat = obs_feat.view(B, L, -1)
-    
+
     rssm_out = rssm_model.forward_observe(
         obs_feats= obs_feat,
         actions= actions,
@@ -140,7 +139,7 @@ def fit_rssm(
     total_loss.backward()
     optimizer.step()
 
-    losses['total_loss'] = total_loss.detach()
+    # losses['total_loss'] = total_loss.detach()
 
     return losses
 
@@ -325,7 +324,9 @@ def main(cfg):
         episode_rewards.append(ep_reward)
 
         for key, value in losses.items():
-            value = value.item()
+            if isinstance(value, torch.Tensor):
+                value = value.item()
+            value = value
             writer.add_scalar(f"Loss/{key}", value, step)
         
         writer.add_scalar(f"Reward/mean_reward",np.mean(episode_rewards), step)

@@ -200,8 +200,8 @@ class RSSM(nn.Module):
                 ss = []
                 s_embeds = []
                 hs = []
-                hs.append(prev_h)
-                ss.append(prev_s)
+                # hs.append(prev_h)
+                # ss.append(prev_s)
 
                 for l in range(L):
                      obs_feat = obs_feats[:, l + 1]
@@ -235,7 +235,7 @@ class RSSM(nn.Module):
     
     def imagine_ahead(self,
                       actions: torch.Tensor,
-                      init_state: torch.Tensor = None) -> dict:
+                      init_state: dict) -> dict:
         
         B, H, _ = actions.shape
         
