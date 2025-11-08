@@ -204,7 +204,7 @@ class RSSM(nn.Module):
                 ss.append(prev_s)
 
                 for l in range(L):
-                     obs_feat = obs_feats[:, l]
+                     obs_feat = obs_feats[:, l + 1]
                      action = actions[:, l]
                      out = self.observe_step(obs_feat, prev_h, prev_s, action)
                      mu_ps.append(out['mu_p'])
