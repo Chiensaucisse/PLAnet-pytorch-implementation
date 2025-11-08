@@ -111,10 +111,7 @@ def fit_rssm(
         optimizer
     ) -> dict:
 
-    reward_model.train()
-    encoder.train()
-    decoder.train()
-    rssm_model.train()
+    
 
     observations_image = batch['observations']
     actions =  batch['actions']
@@ -124,7 +121,7 @@ def fit_rssm(
     observations_image_squeezed = observations_image.view(B * L, C, H, W)
     obs_feat = encoder(observations_image_squeezed)
     obs_feat = obs_feat.view(B, L, -1)
-
+    
     rssm_out = rssm_model.forward_observe(
         obs_feats= obs_feat,
         actions= actions,
@@ -188,14 +185,19 @@ def train(rssm_model: nn.Module,
     episodes_rewards = []
 
 
-    batch = buffer.sample(batch_size, chunk_length= L)
-    losses = fit_rssm(rssm_model,
-            reward_model,
-            encoder,
-            decoder,
-            batch, 
-            optim,
-            )
+    for _ in range(C):
+        batch = buffer.sample(batch_size, chunk_length= L)
+        reward_model.train()
+        encoder.train()
+        decoder.train()
+        rssm_model.train()
+        losses = fit_rssm(rssm_model,
+                reward_model,
+                encoder,
+                decoder,
+                batch, 
+                optim,
+                )
 
     reward_model.eval()
     encoder.eval()
@@ -301,7 +303,7 @@ def main(cfg):
         if step % 1 == 0:
             print(f"Mean reward: {np.mean(episode_rewards)}")
             save_model(save_path, rssm_model, reward_model, encoder, decoder)
-            visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
+            # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
 
 
 

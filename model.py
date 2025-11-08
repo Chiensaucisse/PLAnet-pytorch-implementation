@@ -109,8 +109,8 @@ class RSSM(nn.Module):
 
     def init_state(self, obs_feat: nn.Module, h: torch.Tensor = None, s: torch.Tensor = None, a: torch.Tensor = None) -> dict:
             B, device = obs_feat.shape[0], obs_feat.device
-            if len(obs_feat.shape) > 2:
-                 obs_feat = obs_feat[:, 0, :]
+            # if len(obs_feat.shape) > 2:
+            #      obs_feat = obs_feat[:, 0, :]
             h = torch.zeros((B, self.deter), device = device) if h is None else h
             s = torch.zeros((B, self.stoch), device = device) if s is None else s
             a = torch.zeros((B, self.action_size), device = device) if a is None else a
@@ -189,7 +189,7 @@ class RSSM(nn.Module):
                         actions: torch.Tensor) -> dict:
                 
                 B, L, _ = actions.shape
-                init_state = self.init_state(obs_feat= obs_feats)
+                init_state = self.init_state(obs_feat= obs_feats[:,0,:])
                 prev_h = init_state['h']
                 prev_s = init_state['s']
 

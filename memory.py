@@ -47,9 +47,9 @@ class ReplayBuffer():
             actions_batch.append(act_seq)
             rewards_batch.append(rew_seq)
         
-        obs_batch = torch.stack(obs_batch, dim = 0).to(device=self.device)
-        act_batch = torch.stack(actions_batch, dim = 0).to(device=self.device)
-        rewards_batch = torch.stack(rewards_batch, dim = 0).to(device=self.device)
+        obs_batch = torch.stack(obs_batch, dim = 0).float().to(device=self.device)
+        act_batch = torch.stack(actions_batch, dim = 0).float().to(device=self.device)
+        rewards_batch = torch.stack(rewards_batch, dim = 0).float().to(device=self.device)
         
         return {
             "observations": obs_batch,

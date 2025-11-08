@@ -38,6 +38,14 @@ def to_tensor_obs(image: np.ndarray, size: tuple):
 
     return image
 
+def preprocess_img(image: torch.Tensor, depth: int = 8):
+    image.div_(2 ** (8 - depth)).floor_().div_(2 ** depth).sub_(0.5)
+    image.add_(torch.randn_like(image).div_(2 ** depth)).clamp_(-0.5, 0.5)
+
+def postprocess_img(image, depth):
+
+    image = np.floor((image + 0.5) * 2 ** depth)
+    return np.clip(image * 2**(8 - depth), 0, 2**8 - 1).astype(np.uint8)
 
 def plot_reconstructed(renconstructed_img, tgt_image):
 
@@ -90,8 +98,8 @@ def compute_losses(rssm_out: dict,
     decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
     reconstructed = torch.sigmoid(decoded_obs)
 
-    if True:
-        plot_reconstructed(reconstructed, observation_images)
+    # if True:
+    #     plot_reconstructed(reconstructed, observation_images)
     reconstruction_loss  = F.mse_loss(reconstructed, observation_images, reduction = 'none').mean([2,3,4]).sum(dim=1)
     reconstruction_loss = reconstruction_loss.mean() * recon_weight
 
@@ -138,8 +146,8 @@ class TorchImageEnv:
     def step(self, action: np.ndarray):
 
         _, r, d, i, f  = self.env.step(action)
-
         x = to_tensor_obs(self.env.render(), size = self.img_size)
+        # preprocess_img(x)
 
         return x , r , d , i, f
     
