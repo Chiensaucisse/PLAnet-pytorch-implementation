@@ -18,7 +18,7 @@ def get_parser():
 
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--num_train_step", type=int, default=1000, help="Number of training steps")
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
 
 
     parser.add_argument("--stochastic_dim", type=int, default=30, help="Stochastic latent dimension")
@@ -301,7 +301,7 @@ def main(cfg):
         if step % 1 == 0:
             print(f"Mean reward: {np.mean(episode_rewards)}")
             save_model(save_path, rssm_model, reward_model, encoder, decoder)
-            # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
+            visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
 
 
 
