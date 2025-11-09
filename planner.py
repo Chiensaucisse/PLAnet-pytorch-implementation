@@ -21,7 +21,7 @@ def planner(rssm, reward_model, cur_state_belief, iterations=10, H=12, num_candi
 
         for it in range(0, iterations):
 
-            actions = means.unsqueeze(0) + stds.unsqueeze(0) * torch.rand((num_candidates, H, action_size), device=device)
+            actions = means.unsqueeze(0) + stds.unsqueeze(0) * torch.randn((num_candidates, H, action_size), device=device)
             actions = actions.to(device)
             actions = torch.clamp(actions, min=action_low, max=action_high)
 

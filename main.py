@@ -27,11 +27,11 @@ def get_parser():
     parser.add_argument("--obs_feat_dim", type=int, default=1024, help="Observation feature dimension")
 
     parser.add_argument("--C", type=int, default=100, help="training number of iteration")
-    parser.add_argument("--R", type=int, default=4, help="Action repeat")
+    parser.add_argument("--R", type=int, default=1, help="Action repeat")
     parser.add_argument("--S", type=int, default=5, help="Seed episodes")
     parser.add_argument("--T", type=int, default=15, help="Sequence length for training")
     parser.add_argument("--L", type=int, default=50, help="Sequence length for training")
-    parser.add_argument("--eps", type=int, default=0.1, help="Small gaussian exploration noise")
+    parser.add_argument("--eps", type=float, default=0.3, help="Small gaussian exploration noise")
 
     return parser
 
@@ -61,9 +61,6 @@ def visualize_episode(env: TorchImageEnv, rssm_model: nn.Module, reward_model: n
                 break
     env_human.close()
     
-
-
-
 
 
 def populate_random(env: TorchImageEnv, buffer: ReplayBuffer,  num_episodes: int = 10):
@@ -181,7 +178,7 @@ def train(rssm_model: nn.Module,
     
     episode_states  = []
     episode_actions = []
-    episodes_rewards = []
+    episode_rewards = []
 
 
     for _ in range(C):
@@ -198,49 +195,48 @@ def train(rssm_model: nn.Module,
                 optim,
                 )
 
-    reward_model.eval()
-    encoder.eval()
-    decoder.eval()
-    rssm_model.eval()
+    # reward_model.eval()
+    # encoder.eval()
+    # decoder.eval()
+    # rssm_model.eval()
 
-    x = env.reset()
-    obs  = x
+    obs = env.reset()
     action = None
-    # x = x.to(device)
-    # x = x.unsqueeze(0)
-    # with torch.no_grad():
-    #     obs_feat = encoder(x)
     terminated = False
-    obs_feat_past = []
-    actions_past = []
+    # obs_feat_past = []
+    # actions_past = []
     
 
     while terminated == False:
         obs = obs.to(device)
         obs = obs.unsqueeze(0)
-
-        with torch.no_grad():
-            obs_feat = encoder(obs) # shape: (1, obs_feat_dim)
-            obs_feat_unsqueezed = obs_feat.unsqueeze(0)
-            obs_feat_past.append(obs_feat_unsqueezed)
-            obs_feat_past_tensor = torch.cat(obs_feat_past, dim=1)
-        
-        if action is not None:
-            actions_past.append(action.unsqueeze(0).unsqueeze(0))
-            actions_past_tensor = torch.cat(actions_past, dim=1)
-            with torch.no_grad():
-                out = rssm_model.forward_observe(
-                    obs_feat_past_tensor,
-                    actions_past_tensor,
-                )
-                hs = out['hs']
-                ss = out['ss']
-                cur_state_belief = {'h':torch.unbind(hs, dim=1)[-1], 's':torch.unbind(ss, dim=1)[-1]}
+        obs_feat = encoder(obs)
+        if action is None:
+            current_state = rssm_model.init_state(obs_feat)
         else:
-            with torch.no_grad():
-                cur_state_belief = rssm_model.init_state(obs_feat)
+            current_state = rssm_model.observe_step(obs_feat, current_state['h'], current_state['s'], action.unsqueeze(0))
+        # with torch.no_grad():
+        #     obs_feat = encoder(obs) # shape: (1, obs_feat_dim)
+        #     obs_feat_unsqueezed = obs_feat.unsqueeze(0)
+        #     obs_feat_past.append(obs_feat_unsqueezed)
+        #     obs_feat_past_tensor = torch.cat(obs_feat_past, dim=1)
+        
+        # if action is not None:
+        #     actions_past.append(action.unsqueeze(0).unsqueeze(0))
+        #     actions_past_tensor = torch.cat(actions_past, dim=1)
+        #     with torch.no_grad():
+        #         out = rssm_model.forward_observe(
+        #             obs_feat_past_tensor,
+        #             actions_past_tensor,
+        #         )
+        #         hs = out['hs']
+        #         ss = out['ss']
+        #         cur_state_belief = {'h':torch.unbind(hs, dim=1)[-1], 's':torch.unbind(ss, dim=1)[-1]}
+        # else:
+        #     with torch.no_grad():
+        #         cur_state_belief = rssm_model.init_state(obs_feat)
 
-        action = planner(rssm_model, reward_model, cur_state_belief, device = device)
+        action = planner(rssm_model, reward_model, current_state, device = device)
         expl_noise_tensor = expl_noise * torch.randn_like(action)
         action  = action + expl_noise_tensor
         action = torch.clamp(action, min = -2.0, max= 2.0)
@@ -249,23 +245,24 @@ def train(rssm_model: nn.Module,
         for _ in range(R):
             y, r, d, t,_ =  env.step(action.cpu().numpy())
             reward += r
-            x  = y
             terminated = d | t 
             if terminated:
                 break
-        obs = x
-
-        episode_states.append(obs.cpu())
+        
+        episode_states.append(obs[0].cpu())
         episode_actions.append(action.cpu())
-        episodes_rewards.append(torch.tensor(reward, dtype= torch.float32))
+        episode_rewards.append(torch.tensor(reward, dtype= torch.float32))
+        obs = y
 
-        if terminated:
-            episode_states.append(obs)
+        
+    episode_states.append(obs)
     
 
     observations_t = torch.stack(episode_states, dim = 0)
     actions_t = torch.stack(episode_actions, dim = 0)
-    rewards_t  =torch.stack(episodes_rewards, dim = 0)
+    rewards_t  =torch.stack(episode_rewards, dim = 0)
+
+
 
     episode = {
         "observations": observations_t,
@@ -274,8 +271,72 @@ def train(rssm_model: nn.Module,
     }
     buffer.add_episode(episode)
 
-    return losses, np.sum(episodes_rewards)
+    return losses, np.sum(episode_rewards)
 
+
+def eval(
+        env : TorchImageEnv,
+        rssm_model: nn.Module,
+        encoder: nn.Module,
+        decoder: nn.Module,
+        reward_model: nn.Module,
+        device = 'cpu',
+
+):
+    
+    obs = env.reset()
+    frames = []
+    action = None
+    terminated = False
+    predicted_rewards = []
+    actual_rewards = []
+    episode_states  = []
+    episode_actions = []
+
+    while terminated == False:
+        obs = obs.to(device)
+        obs = obs.unsqueeze(0)
+
+        obs_feat = encoder(obs)
+        if action is None:
+            current_state = rssm_model.init_state(obs_feat)
+        else:
+            current_state = rssm_model.observe_step(obs_feat, current_state['h'], current_state['s'], action.unsqueeze(0))
+
+        action = planner(rssm_model, reward_model, current_state, device = device)
+        y, r, d, t,_ =  env.step(action.cpu().numpy())
+        decoded_pred = decoder(torch.cat([current_state['h'], current_state['s']], dim = -1)).cpu()
+        frames.append((obs[0],decoded_pred[0]))
+        pred_reward = reward_model(torch.cat([current_state['h'], current_state['s']], dim = -1)).squeeze().cpu().item()
+        predicted_rewards.append(pred_reward)
+        actual_rewards.append(r)
+        episode_states.append(obs[0].cpu())
+        episode_actions.append(action.cpu())
+        terminated = d | t
+        obs = y
+    
+    episode_states.append(obs)
+    
+    
+
+    observations_t = torch.stack(episode_states, dim = 0)
+    actions_t = torch.stack(episode_actions, dim = 0)
+    rewards_t = torch.tensor(actual_rewards, dtype = torch.float32)
+
+
+
+    episode = {
+        "observations": observations_t,
+        "actions": actions_t,
+        "rewards": rewards_t
+    }
+    visu = {
+        'frames': frames,
+        'pred_rewards': pred_reward,
+        'actual_rewards': actual_rewards
+    }
+
+    return episode, visu
 
 
 def main(cfg):
@@ -335,9 +396,17 @@ def main(cfg):
             writer.add_scalar(f"Loss/{key}", value, step)
         
         writer.add_scalar(f"Reward/mean_reward",np.mean(episode_rewards), step)
-        if step % 1 == 0:
+        if step % 5 == 0:
             print(f"Mean reward: {np.mean(episode_rewards)}")
             save_model(save_path, rssm_model, reward_model, encoder, decoder)
+            reward_model.eval()
+            encoder.eval()
+            decoder.eval()
+            rssm_model.eval()
+            with torch.no_grad():
+                episode, visu = eval(env, rssm_model, encoder, decoder, reward_model, device)
+                save_videos(visu, save_dir= 'videos')
+            buffer.add_episode(episode)
             # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
 
 

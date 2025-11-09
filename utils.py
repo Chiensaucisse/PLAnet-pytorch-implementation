@@ -6,6 +6,7 @@ from torch import nn
 import torch.nn.functional as F
 from pathlib import Path
 import matplotlib.pyplot as plt
+import os 
 
 def atanh(x: torch.Tensor):
     return 0.5 * torch.log((1 + x) / (1 - x))
@@ -75,6 +76,42 @@ def plot_reconstructed(renconstructed_img, tgt_image):
     plt.savefig(f"debug/reconstruction_seq_batch{idx}.png", bbox_inches="tight", dpi=300)
     plt.close(fig)
 
+
+
+def save_videos(visu, save_dir="videos", fps=15):
+
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    decoded_frames = []
+    actual_frames = []
+
+    for obs, decoded in visu['frames']:
+
+        obs_np = (obs.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)
+        decoded_np = (decoded.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)
+        
+        actual_frames.append(obs_np)
+        decoded_frames.append(decoded_np)
+
+    h, w, _ = actual_frames[0].shape
+
+
+    out_actual = cv2.VideoWriter(
+        os.path.join(save_dir, "actual.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+    )
+    out_decoded = cv2.VideoWriter(
+        os.path.join(save_dir, "decoded.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+    )
+
+    for frame_a, frame_d in zip(actual_frames, decoded_frames):
+        out_actual.write(frame_a)
+        out_decoded.write(frame_d)
+
+    out_actual.release()
+    out_decoded.release()
+
+    print(f"Videos saved in {save_dir}/actual.mp4 and {save_dir}/decoded.mp4")
 
 
 def compute_losses(rssm_out: dict,
