@@ -107,7 +107,7 @@ class RSSM(nn.Module):
 
 
 
-    def init_state(self, obs_feat: nn.Module, h: torch.Tensor = None, s: torch.Tensor = None, a: torch.Tensor = None) -> dict:
+    def init_state(self, obs_feat: torch.Tensor, h: torch.Tensor = None, s: torch.Tensor = None, a: torch.Tensor = None) -> dict:
             B, device = obs_feat.shape[0], obs_feat.device
             # if len(obs_feat.shape) > 2:
             #      obs_feat = obs_feat[:, 0, :]

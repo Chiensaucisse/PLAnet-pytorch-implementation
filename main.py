@@ -3,7 +3,7 @@ import os
 import gymnasium as gym
 import torch
 from torch import nn 
-import numpy
+import numpy as np
 from memory import ReplayBuffer
 from model import RSSM, RewardModel, ConvEncoder, ConvDecoder
 from tqdm import tqdm
@@ -31,7 +31,7 @@ def get_parser():
     parser.add_argument("--S", type=int, default=5, help="Seed episodes")
     parser.add_argument("--T", type=int, default=15, help="Sequence length for training")
     parser.add_argument("--L", type=int, default=50, help="Sequence length for training")
-    parser.add_argument("--eps", type=int, default=0.1, help="Small gaussian exploration noise")
+    parser.add_argument("--eps", type=float, default=0.1, help="Small gaussian exploration noise")
 
     return parser
 
@@ -150,7 +150,7 @@ def train(rssm_model: nn.Module,
           R: int,
           T: int,
           L: int,
-          expl_noise: int,
+          expl_noise: float,
           batch_size: int,
           buffer: ReplayBuffer,
           encoder: nn.Module,
@@ -213,6 +213,8 @@ def train(rssm_model: nn.Module,
     terminated = False
     obs_feat_past = []
     actions_past = []
+
+    episode_states.append(obs.cpu())
     
 
     while terminated == False:
@@ -259,8 +261,8 @@ def train(rssm_model: nn.Module,
         episode_actions.append(action.cpu())
         episodes_rewards.append(torch.tensor(reward, dtype= torch.float32))
 
-        if terminated:
-            episode_states.append(obs)
+        # if terminated:
+        #     episode_states.append(obs)
     
 
     observations_t = torch.stack(episode_states, dim = 0)
