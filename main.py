@@ -26,8 +26,8 @@ def get_parser():
     parser.add_argument("--hidden_dim", type=int, default=400, help="Hidden dimension for reward model")
     parser.add_argument("--obs_feat_dim", type=int, default=1024, help="Observation feature dimension")
 
-    parser.add_argument("--C", type=int, default=100, help="Chunk length for RSSM training")
-    parser.add_argument("--R", type=int, default=4, help="Number of rollout steps")
+    parser.add_argument("--C", type=int, default=100, help="training number of iteration")
+    parser.add_argument("--R", type=int, default=4, help="Action repeat")
     parser.add_argument("--S", type=int, default=5, help="Seed episodes")
     parser.add_argument("--T", type=int, default=15, help="Sequence length for training")
     parser.add_argument("--L", type=int, default=50, help="Sequence length for training")
@@ -294,8 +294,13 @@ def main(cfg):
     encoder = ConvEncoder(out_dim = cfg.obs_feat_dim).to(device)
     decoder = ConvDecoder(in_dim = cfg.stochastic_dim + cfg.deter_dim).to(device)
 
-    optimizer = torch.optim.Adam(rssm_model.parameters(), lr = cfg.lr)
-
+    optimizer = torch.optim.Adam(
+    list(rssm_model.parameters()) +
+    list(reward_model.parameters()) +
+    list(encoder.parameters()) +
+    list(decoder.parameters()),
+    lr=cfg.lr
+)
 
     populate_random(env, buffer, num_episodes = cfg.S)
 
