@@ -224,6 +224,21 @@ def save_model(save_root: str,
     save_path = Path(save_root) / 'checkpoint.pth'
     torch.save(checkpoint, save_path)
 
+def load_model(load_root: str,
+               rssm_model: nn.Module,
+               reward_model: nn.Module,
+               encoder: nn.Module,
+               decoder: nn.Module,
+               device) -> None:
+    
+    load_path = Path(load_root) #/ 'checkpoint.pth'
+    checkpoint = torch.load(load_path, map_location=device)
+
+    rssm_model.load_state_dict(checkpoint['rssm_model_state_dict'])
+    reward_model.load_state_dict(checkpoint['reward_model_state_dict'])
+    encoder.load_state_dict(checkpoint['encoder_state_dict'])
+    decoder.load_state_dict(checkpoint['decoder_state_dict'])
+
 
 
 if __name__ == "__main__":
