@@ -12,7 +12,6 @@ from planner import planner
 from queue import deque
 from torch.utils.tensorboard import SummaryWriter
 
-
 def get_parser():
     parser = argparse.ArgumentParser(description="Train RSSM on Pendulum-v1")
 
@@ -32,6 +31,8 @@ def get_parser():
     parser.add_argument("--T", type=int, default=15, help="Sequence length for training")
     parser.add_argument("--L", type=int, default=50, help="Sequence length for training")
     parser.add_argument("--eps", type=float, default=0.3, help="Small gaussian exploration noise")
+    parser.add_argument("--reconstruction", action="store_true", help="Enable reconstruction"
+    )
 
     return parser
 
@@ -75,19 +76,17 @@ def populate_random(env: TorchImageEnv, buffer: ReplayBuffer,  num_episodes: int
 
             # Random action
             action = env.sample_random_action()
-
-        
             next_state, reward, done, truncated, info = env.step(action)
             observations_list.append(state)
             actions_list.append(action)
             rewards_list.append(reward)
-
+         
             state = next_state
 
             if done or truncated:
                 terminated = True
                 observations_list.append(state)
-    
+   
         observations_t = torch.stack(observations_list, dim = 0)
         actions_t = torch.stack(actions_list, dim = 0)
         rewards_t  = torch.stack(rewards_list, dim = 0)
@@ -105,7 +104,8 @@ def fit_rssm(
         encoder: nn.Module,
         decoder: nn.Module,
         batch: dict,
-        optimizer
+        optimizer,
+        reconstruction: bool
     ) -> dict:
 
     
@@ -128,7 +128,9 @@ def fit_rssm(
         observations_image,
         rewards,
         decoder,
-        reward_model
+        reward_model,
+        reconstruction
+
     )
 
     total_loss = losses['total_loss']
@@ -149,6 +151,7 @@ def train(rssm_model: nn.Module,
           L: int,
           expl_noise: float,
           batch_size: int,
+          reconstruction: bool,
           buffer: ReplayBuffer,
           encoder: nn.Module,
           decoder: nn.Module,
@@ -185,7 +188,8 @@ def train(rssm_model: nn.Module,
         batch = buffer.sample(batch_size, chunk_length= L)
         reward_model.train()
         encoder.train()
-        decoder.train()
+        if decoder is not None:
+            decoder.train()
         rssm_model.train()
         losses = fit_rssm(rssm_model,
                 reward_model,
@@ -193,6 +197,7 @@ def train(rssm_model: nn.Module,
                 decoder,
                 batch, 
                 optim,
+                reconstruction
                 )
 
     # reward_model.eval()
@@ -282,6 +287,7 @@ def eval(
         encoder: nn.Module,
         decoder: nn.Module,
         reward_model: nn.Module,
+        reconstruction: bool,
         device = 'cpu',
 
 ):
@@ -307,8 +313,11 @@ def eval(
 
         action = planner(rssm_model, reward_model, current_state, device = device)
         y, r, d, t,_ =  env.step(action.cpu().numpy())
-        decoded_pred = decoder(torch.cat([current_state['h'], current_state['s']], dim = -1)).cpu()
-        frames.append((obs[0],decoded_pred[0]))
+        if reconstruction:
+            decoded_pred = decoder(torch.cat([current_state['h'], current_state['s']], dim = -1)).cpu()
+            frames.append((obs[0],decoded_pred[0]))
+        else:
+            frames.append((obs[0],None))
         pred_reward = reward_model(torch.cat([current_state['h'], current_state['s']], dim = -1)).squeeze().cpu().item()
         predicted_rewards.append(pred_reward)
         actual_rewards.append(r)
@@ -344,6 +353,7 @@ def eval(
 def main(cfg):
 
     env = TorchImageEnv('Pendulum-v1')
+    # env = MarioBrosEnv(img_size=(64,64))
     device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 
     action_size = env.action_size
@@ -355,19 +365,29 @@ def main(cfg):
                       hidden= cfg.hidden_dim).to(device)
     reward_model  = RewardModel(in_dim = cfg.stochastic_dim  + cfg.deter_dim, hidden_dim = cfg.hidden_dim).to(device)
     encoder = ConvEncoder(out_dim = cfg.obs_feat_dim).to(device)
-    decoder = ConvDecoder(in_dim = cfg.stochastic_dim + cfg.deter_dim).to(device)
+ 
+    if cfg.reconstruction:
+        decoder = ConvDecoder(in_dim = cfg.stochastic_dim + cfg.deter_dim).to(device)
+        optimizer = torch.optim.Adam(
+        list(rssm_model.parameters()) +
+        list(reward_model.parameters()) +
+        list(encoder.parameters()) +
+        list(decoder.parameters()),
+        lr=cfg.lr
+    )
+    else:
+        decoder = None
+        optimizer = torch.optim.Adam(
+        list(rssm_model.parameters()) +
+        list(reward_model.parameters()) +
+        list(encoder.parameters()),
+        lr=cfg.lr
+    )
 
-    optimizer = torch.optim.Adam(
-    list(rssm_model.parameters()) +
-    list(reward_model.parameters()) +
-    list(encoder.parameters()) +
-    list(decoder.parameters()),
-    lr=cfg.lr
-)
 
     populate_random(env, buffer, num_episodes = cfg.S)
 
-    episode_rewards = deque(maxlen = 100)
+    episode_rewards = deque(maxlen = 10)
     writer = SummaryWriter(log_dir="runs/planet_pendulum")
     save_path = "weights/"
     os.makedirs(save_path, exist_ok= True)
@@ -382,6 +402,7 @@ def main(cfg):
             cfg.L,
             cfg.eps,
             cfg.batch_size,
+            cfg.reconstruction,
             buffer,
             encoder,
             decoder,
@@ -403,11 +424,12 @@ def main(cfg):
             save_model(save_path, rssm_model, reward_model, encoder, decoder)
             reward_model.eval()
             encoder.eval()
-            decoder.eval()
+            if decoder is not None:
+                decoder.eval()
             rssm_model.eval()
             with torch.no_grad():
-                episode, visu = eval(env, rssm_model, encoder, decoder, reward_model, device)
-                save_videos(visu, save_dir= 'videos')
+                episode, visu = eval(env, rssm_model, encoder, decoder, reward_model, cfg.reconstruction, device)
+                save_videos(visu, save_dir= 'videos', save_decoded = cfg.reconstruction)
             buffer.add_episode(episode)
             # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
 

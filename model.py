@@ -187,7 +187,7 @@ class RSSM(nn.Module):
     def forward_observe(self, 
                         obs_feats: torch.Tensor,
                         actions: torch.Tensor) -> dict:
-                
+    
                 B, L, _ = actions.shape
                 init_state = self.init_state(obs_feat= obs_feats[:,0,:])
                 prev_h = init_state['h']

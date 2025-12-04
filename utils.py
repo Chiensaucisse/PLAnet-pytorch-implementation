@@ -30,6 +30,19 @@ def kl_divergence_diag(mu_q: torch.Tensor, std_q: torch.Tensor, mu_p: torch.Tens
 
     return kl 
 
+
+def info_nce(queries, positive_keys, negative_keys = None, temperature = 0.7):
+
+
+    queries, positive_keys = F.normalize(queries, dim = -1), F.normalize(positive_keys, dim = -1)
+    logits = queries @  positive_keys.T
+    logits /= temperature
+
+    labels = torch.arange(queries.shape[0], device = queries.device)
+
+    return nn.functional.cross_entropy(logits, labels, reduction= 'mean')
+
+
 def to_tensor_obs(image: np.ndarray, size: tuple):
     
 
@@ -78,7 +91,7 @@ def plot_reconstructed(renconstructed_img, tgt_image):
 
 
 
-def save_videos(visu, save_dir="videos", fps=15):
+def save_videos(visu, save_dir="videos", save_decoded = True,  fps=15):
 
 
     os.makedirs(save_dir, exist_ok=True)
@@ -89,10 +102,12 @@ def save_videos(visu, save_dir="videos", fps=15):
     for obs, decoded in visu['frames']:
 
         obs_np = (obs.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)
-        decoded_np = (decoded.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)
+        if save_decoded:
+            decoded_np = (decoded.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)
+            decoded_frames.append(decoded_np)
         
         actual_frames.append(obs_np)
-        decoded_frames.append(decoded_np)
+        
 
     h, w, _ = actual_frames[0].shape
 
@@ -100,16 +115,19 @@ def save_videos(visu, save_dir="videos", fps=15):
     out_actual = cv2.VideoWriter(
         os.path.join(save_dir, "actual.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
     )
-    out_decoded = cv2.VideoWriter(
-        os.path.join(save_dir, "decoded.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
-    )
+    if save_decoded:
+        out_decoded = cv2.VideoWriter(
+            os.path.join(save_dir, "decoded.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+        )
 
     for frame_a, frame_d in zip(actual_frames, decoded_frames):
         out_actual.write(frame_a)
-        out_decoded.write(frame_d)
+        if save_decoded:
+            out_decoded.write(frame_d)
 
     out_actual.release()
-    out_decoded.release()
+    if save_decoded:
+        out_decoded.release()
 
     print(f"Videos saved in {save_dir}/actual.mp4 and {save_dir}/decoded.mp4")
 
@@ -119,48 +137,59 @@ def compute_losses(rssm_out: dict,
                    rewards_gt: torch.Tensor,
                    decoder,
                    reward_model,
+                   reconstruction, 
                    kl_free_nats = 3.0,
                    kl_scale = 1.0,
                    recon_weight = 1.0,
+                   contrastive_weight = 1.0,
                    reward_weight = 1.0):
     
     
     hs = rssm_out['hs'] # (B, L, H)
     ss = rssm_out['ss'] # (B, L, S)
-    
-    latent_feats = torch.cat([hs, ss], dim = -1) # (B, L, H + S)
-    B, L, D = latent_feats.shape
-    squeeze_latent = latent_feats.view(B*L, -1)
-    squeeze_decoded_obs = decoder(squeeze_latent)
-    decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
- 
-    reconstructed = decoded_obs # torch.sigmoid(decoded_obs)
-
-    # if True:
-    #     plot_reconstructed(reconstructed, observation_images)
-
-    reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
-    reconstruction_loss *=  recon_weight
-
-    reward_preds = reward_model(squeeze_latent).view(B,L)
-
-
-    reward_loss = F.mse_loss(reward_preds, rewards_gt, reduce= 'mean') * reward_weight
-
     mu_qs = rssm_out['mu_qs']
     std_qs = rssm_out['std_qs']
     mu_ps = rssm_out['mu_ps']
     std_ps = rssm_out['std_ps']
+    
+    latent_feats = torch.cat([hs, ss], dim = -1) # (B, L, H + S)
+    B, L, D = latent_feats.shape
+    squeeze_latent = latent_feats.view(B*L, -1)
+    if reconstruction:
+        squeeze_decoded_obs = decoder(squeeze_latent)
+        decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
+        reconstructed = decoded_obs # torch.sigmoid(decoded_obs)
+        reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
+        reconstruction_loss *=  recon_weight
+    else:
+        mu_ps_next = mu_ps[:,1:]
+        mu_qs_next = mu_qs[:,1:]
+        mu_ps_next = mu_ps_next.reshape(B*(L-1), -1)
+        mu_qs_next = mu_qs_next.reshape(B*(L-1), -1)
+        contrastive_loss = info_nce(mu_ps_next, mu_qs_next)
+        
 
+
+    reward_preds = reward_model(squeeze_latent).view(B,L)
+    reward_loss = F.mse_loss(reward_preds, rewards_gt, reduce= 'mean') * reward_weight
+
+    
     kl  = kl_divergence_diag(mu_qs, std_qs, mu_ps, std_ps)
     kl = torch.clamp(kl - kl_free_nats, min = 0.0)
     kl_loss = kl.mean() * kl_scale
 
-    total_loss = reconstruction_loss + reward_loss + kl_loss
+
+
+    total_loss = reward_loss + kl_loss
+
+    if reconstruction:
+        total_loss += reconstruction_loss
+    else:
+        total_loss += contrastive_loss * contrastive_weight
 
     return {
         "total_loss": total_loss,
-        "recon_loss": reconstruction_loss.item(),
+        "recon_loss": reconstruction_loss.item() if reconstruction else 0.0,
         "reward_loss": reward_loss.item(),
         "kl_loss": kl_loss.item()
     }
@@ -219,7 +248,7 @@ def save_model(save_root: str,
         'rssm_model_state_dict': rssm_model.state_dict(),
         'reward_model_state_dict': reward_model.state_dict(),
         'encoder_state_dict': encoder.state_dict(),
-        'decoder_state_dict': decoder.state_dict()
+        'decoder_state_dict': decoder.state_dict() if decoder is not None else None
     }
     save_path = Path(save_root) / 'checkpoint.pth'
     torch.save(checkpoint, save_path)
@@ -237,7 +266,8 @@ def load_model(load_root: str,
     rssm_model.load_state_dict(checkpoint['rssm_model_state_dict'])
     reward_model.load_state_dict(checkpoint['reward_model_state_dict'])
     encoder.load_state_dict(checkpoint['encoder_state_dict'])
-    decoder.load_state_dict(checkpoint['decoder_state_dict'])
+    if decoder is not None:
+        decoder.load_state_dict(checkpoint['decoder_state_dict'])
 
 
 
