@@ -1,7 +1,7 @@
 import torch
 from utils import reparameterize
 
-def planner(rssm, reward_model, cur_state_belief, iterations=10, H=12, num_candidates=1000, topk=100, action_low = -2, action_high=2, device=None):
+def planner(rssm, reward_model, cur_state_belief, explo = False, iterations=10, H=12, num_candidates=1000, topk=100, action_low = -2, action_high=2, device=None):
 
     action_size = rssm.action_size
 
@@ -25,7 +25,7 @@ def planner(rssm, reward_model, cur_state_belief, iterations=10, H=12, num_candi
             actions = actions.to(device)
             actions = torch.clamp(actions, min=action_low, max=action_high)
 
-            out = rssm.imagine_ahead(actions, state)
+            out = rssm.imagine_ahead(actions, state, explo = explo)
 
             ss = out['ss'] # shape: (B, H, stoch)
             hs = out['hs'] # shape: (B, H, deter)

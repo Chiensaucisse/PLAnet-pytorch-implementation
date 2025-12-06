@@ -292,3 +292,27 @@ class RewardModel(nn.Module):
         
         x = self.mlp(x)
         return x 
+    
+
+
+
+class Ensemble(nn.Module):
+    def __init__(self, deter_size, stoch_size, action_size, embed_size, count=5):
+        super().__init__()
+        self.models = nn.ModuleList([
+            nn.Sequential(
+                # Input: Your h_t + s_t + a_t
+                nn.Linear(deter_size + stoch_size + action_size, 400),
+                nn.ReLU(),
+                nn.Linear(400, 400),
+                nn.ReLU(),
+                # Output: The Convolutional Encoder features (e.g., 1024 dim)
+                nn.Linear(400, embed_size)
+            ) for _ in range(count)
+        ])
+
+    def forward(self, h, s, a):
+        # Concatenate your RSSM states with action
+        x = torch.cat([h, s, a], dim=-1)
+        # Return stack of 5 predictions
+        return torch.stack([m(x) for m in self.models], dim=0)
