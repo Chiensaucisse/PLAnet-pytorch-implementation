@@ -59,7 +59,7 @@ class ConvDecoder(nn.Module):
         )
 
     def forward(self, x):
-
+        
         x = self.fc(x)
         x = x.view(-1, 1024, 1, 1)
         x = self.upnet(x)
@@ -81,6 +81,7 @@ class RSSM(nn.Module):
         self.deter = deter_size
         self.obs_feat_size = obs_feat_size
         self.action_size = action_size
+        self.deter_size = deter_size
 
         gru_input_size = self.stoch + action_size
         self.gru  = nn.GRUCell(gru_input_size, deter_size)
@@ -94,10 +95,28 @@ class RSSM(nn.Module):
             nn.Linear(hidden, 2 * stochastic_size),
         )
 
-        self.post_net = nn.Sequential(
+        self.post_net_filtering = nn.Sequential(
             nn.Linear(obs_feat_size + deter_size, hidden),
             nn.ReLU(),
             nn.Linear(hidden, 2 * stochastic_size)
+        )
+
+        self.post_net_smoothing =  nn.Sequential(
+            nn.Linear(obs_feat_size + deter_size + deter_size, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 2 * stochastic_size)
+        )
+
+
+        self.backward_rnn = nn.GRU(
+             self.obs_feat_size,
+             deter_size,
+             batch_first= True
+        )
+        self.futur_pred_head = nn.Sequential(
+            nn.Linear(stochastic_size, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, deter_size),
         )
 
         self.to_next_s = nn.Linear(stochastic_size, stochastic_size)
@@ -107,60 +126,78 @@ class RSSM(nn.Module):
 
 
 
-    def init_state(self, obs_feat: torch.Tensor, h: torch.Tensor = None, s: torch.Tensor = None, a: torch.Tensor = None) -> dict:
+    def init_state(self, obs_feat: torch.Tensor, h: torch.Tensor = None, s: torch.Tensor = None, a: torch.Tensor = None, b: torch.Tensor = None) -> dict:
             B, device = obs_feat.shape[0], obs_feat.device
             # if len(obs_feat.shape) > 2:
             #      obs_feat = obs_feat[:, 0, :]
             h = torch.zeros((B, self.deter), device = device) if h is None else h
             s = torch.zeros((B, self.stoch), device = device) if s is None else s
             a = torch.zeros((B, self.action_size), device = device) if a is None else a
+            
             gru_input = self.latent_act_layer(torch.cat([s, a], dim = 1))
             h = self.gru(gru_input, h)
-            mu_p, std_p = self.posterior(obs_feat, h)
-            s = reparameterize(mu_p, std_p)
+            if b is not None:
+                smooth_input = torch.cat([obs_feat, h, b], dim = 1)
+                mu_q_smooth, std_q_smooth = self.get_dist(self.post_net_smoothing(smooth_input))
+                s = reparameterize(mu_q_smooth, std_q_smooth)
+        
+            else:
+                filter_input = torch.cat([obs_feat, h], dim = 1)
+                mu_q_filter, std_q_filter = self.get_dist(self.post_net_filtering(filter_input))
+                s = reparameterize(mu_q_filter, std_q_filter)
+            
             return {'h': h, 's': s}
     
+
+    def get_dist(self, params: torch.Tensor) -> Tuple[torch.Tensor]:
+         mu, pre_std = params.split(self.stoch, dim = -1)
+         std = F.softplus(pre_std) + 1e-5
+         std = std.clamp(min=1e-4)
+
+         return mu, std
     
-    def prior(self, h: torch.Tensor) -> Tuple[torch.Tensor]:
-        params = self.prior_net(h)
-
-        mu_p, pre_std_p = params.split(self.stoch, dim = -1)
-        std_p = F.softplus(pre_std_p) + 1e-5
-        std_p = std_p.clamp(min=1e-4)
-
-        return mu_p, std_p
-
-    def posterior(self, obs_feat: torch.Tensor, h: torch.Tensor) -> Tuple[torch.Tensor]:
-        state = torch.cat([obs_feat, h], dim = -1)
-        params = self.post_net(state)
-        mu_q, pre_std_q = params.split(self.stoch, dim  = -1)
-        std_q = F.softplus(pre_std_q) + 1e-5
-        std_q = std_q.clamp(min=1e-4)
-
-        return mu_q, std_q
     
     def observe_step(self, 
                      obs_feat: torch.Tensor, 
                      prev_h: torch.Tensor, 
                      prev_s: torch.Tensor,
-                     action: torch.Tensor) -> dict:
+                     action: torch.Tensor,
+                     b: torch.Tensor = None) -> dict:
         
         gru_input = self.latent_act_layer(torch.cat([prev_s, action], dim = 1))
         h = self.gru(gru_input, prev_h)
-        mu_p, std_p = self.prior(h)
-        mu_q, std_q = self.posterior(obs_feat, h)
+        mu_p, std_p = self.get_dist(self.prior_net(h))
 
-        s = reparameterize(mu_q, std_q)
+        filter_input = torch.cat([obs_feat, h], dim = 1)
+        mu_q_filter, std_q_filter = self.get_dist(self.post_net_filtering(filter_input))
+
+        if b is not None:
+             smooth_input = torch.cat([obs_feat, h, b], dim = 1)
+             mu_q_smooth, std_q_smooth = self.get_dist(self.post_net_smoothing(smooth_input))
+             s = reparameterize(mu_q_smooth, std_q_smooth)
+        
+        else:
+             mu_q_smooth, std_q_smooth = None, None
+             s = reparameterize(mu_q_filter, std_q_filter)
+
+
+        
         s_embed = F.relu(self.to_next_s(s))
+
+        pred_b = self.futur_pred_head(s)
 
         out = {
             'mu_p': mu_p,
             'std_p': std_p,
-            'mu_q': mu_q,
-            'std_q': std_q,
+
+            'mu_q_filter': mu_q_filter,  #student
+            'std_q_filter': std_q_filter,
+            'mu_q_smooth': mu_q_filter,
+            'std_q_smooth': std_q_filter, # teacher
             's': s,
             's_embed': s_embed,
-            'h': h
+            'h': h,
+            'pred_b': pred_b
         }
 
         return out
@@ -172,7 +209,7 @@ class RSSM(nn.Module):
                      ) -> dict:
         gru_input = self.latent_act_layer(torch.cat([prev_s, action], dim = -1))
         h = self.gru(gru_input, prev_h)
-        mu_p, std_p = self.prior(h)
+        mu_p, std_p = self.get_dist(self.prior_net(h))
         s = reparameterize(mu_p, std_p)
         # s_embed = self.to_next_s(s)
         out =  {
@@ -189,28 +226,47 @@ class RSSM(nn.Module):
                         actions: torch.Tensor) -> dict:
                 
                 B, L, _ = actions.shape
-                init_state = self.init_state(obs_feat= obs_feats[:,0,:])
+                
+
+                reversed_obs = torch.flip(obs_feats, [1])
+                backward_out,_ = self.backward_rnn(reversed_obs)
+                backward_states = torch.flip(backward_out, [1])
+
+
+                init_state = self.init_state(obs_feat= obs_feats[:,0,:], b = backward_states[:,0,:])
                 prev_h = init_state['h']
                 prev_s = init_state['s']
 
+
                 mu_ps = []
                 std_ps = []
-                mu_qs = []
-                std_qs = []
+
+                mu_qs_filter = []
+                std_qs_filter = []
+                mu_qs_smooth = []
+                std_qs_smooth = []
+
                 ss = []
                 s_embeds = []
                 hs = []
+                pred_bs, target_bs = [], []
                 # hs.append(prev_h)
                 # ss.append(prev_s)
 
                 for l in range(L):
                      obs_feat = obs_feats[:, l + 1]
                      action = actions[:, l]
-                     out = self.observe_step(obs_feat, prev_h, prev_s, action)
+                     b = backward_states[:, l + 1]
+
+                     out = self.observe_step(obs_feat, prev_h, prev_s, action, b)
                      mu_ps.append(out['mu_p'])
                      std_ps.append(out['std_p'])
-                     mu_qs.append(out['mu_q'])
-                     std_qs.append(out ['std_q'])
+                     mu_qs_filter.append(out['mu_q_filter'])
+                     std_qs_filter.append(out['std_q_filter'])
+                     mu_qs_smooth.append(out['mu_q_smooth'])
+                     std_qs_smooth.append(out['std_q_smooth'])
+                     pred_bs.append(out['pred_b'])
+                     target_bs.append(b)
                      
                      
                      h = out['h']
@@ -225,10 +281,14 @@ class RSSM(nn.Module):
                 out =  {
                      'mu_ps': torch.stack(mu_ps, dim = 1),
                      'std_ps': torch.stack(std_ps, dim = 1),
-                     'mu_qs': torch.stack(mu_qs, dim = 1),
-                     'std_qs': torch.stack(std_qs, dim = 1),
+                     'mu_qs_filter': torch.stack(mu_qs_filter, dim = 1),
+                     'std_qs_filter': torch.stack(std_qs_filter, dim = 1),
+                     'mu_qs_smooth': torch.stack(mu_qs_smooth, dim = 1),
+                     'std_qs_smooth': torch.stack(std_qs_smooth, dim = 1),
                      'ss': torch.stack(ss, dim = 1),
-                     'hs': torch.stack(hs, dim = 1)
+                     'hs': torch.stack(hs, dim = 1),
+                     'target_bs': torch.stack(target_bs, dim = 1),
+                     'pred_bs': torch.stack(pred_bs, dim = 1)
                 }
 
                 return out

@@ -122,6 +122,7 @@ def compute_losses(rssm_out: dict,
                    kl_free_nats = 3.0,
                    kl_scale = 1.0,
                    recon_weight = 1.0,
+                   futur_weight = 1.0,
                    reward_weight = 1.0):
     
     
@@ -131,7 +132,8 @@ def compute_losses(rssm_out: dict,
     latent_feats = torch.cat([hs, ss], dim = -1) # (B, L, H + S)
     B, L, D = latent_feats.shape
     squeeze_latent = latent_feats.view(B*L, -1)
-    squeeze_decoded_obs = decoder(squeeze_latent)
+    hs_squeezed = hs.view(B*L, -1)
+    squeeze_decoded_obs = decoder(hs_squeezed)
     decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
  
     reconstructed = decoded_obs # torch.sigmoid(decoded_obs)
@@ -141,28 +143,46 @@ def compute_losses(rssm_out: dict,
 
     reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
     reconstruction_loss *=  recon_weight
-
+    
     reward_preds = reward_model(squeeze_latent).view(B,L)
 
 
     reward_loss = F.mse_loss(reward_preds, rewards_gt, reduce= 'mean') * reward_weight
 
-    mu_qs = rssm_out['mu_qs']
-    std_qs = rssm_out['std_qs']
-    mu_ps = rssm_out['mu_ps']
+    mu_qs_filter= rssm_out['mu_qs_filter']
+    std_qs_filter = rssm_out['std_qs_filter']
+    mu_qs_smooth = rssm_out['mu_qs_smooth']
+    std_qs_smooth = rssm_out['std_qs_smooth']
+
+    mu_ps= rssm_out['mu_ps']
     std_ps = rssm_out['std_ps']
 
-    kl  = kl_divergence_diag(mu_qs, std_qs, mu_ps, std_ps)
+    # Smooth | Prior 
+    kl  = kl_divergence_diag(mu_qs_smooth, std_qs_smooth, mu_ps, std_ps)
     kl = torch.clamp(kl - kl_free_nats, min = 0.0)
-    kl_loss = kl.mean() * kl_scale
+    loss_kl_dynamics = kl.mean() * kl_scale
 
-    total_loss = reconstruction_loss + reward_loss + kl_loss
+    # Smooth | Filter
+    kl  = kl_divergence_diag(mu_qs_smooth, std_qs_smooth, mu_qs_filter, std_qs_filter)
+    kl = torch.clamp(kl - kl_free_nats, min = 0.0)
+    loss_kl_distillation = kl.mean() * kl_scale
+
+
+    target_b = rssm_out['target_bs'].detach()
+    pred_b = rssm_out['pred_bs']
+
+    futur_loss = F.mse_loss(pred_b, target_b).sum()
+    futur_loss *= futur_weight
+
+    total_loss = reconstruction_loss + reward_loss + loss_kl_distillation + loss_kl_dynamics + futur_loss
 
     return {
         "total_loss": total_loss,
         "recon_loss": reconstruction_loss.item(),
         "reward_loss": reward_loss.item(),
-        "kl_loss": kl_loss.item()
+        "kl_loss_dynamics": loss_kl_dynamics.item(),
+        "kl_loss_distillation": loss_kl_distillation.item(),
+        'futur_loss': futur_loss.item(),
     }
 
 

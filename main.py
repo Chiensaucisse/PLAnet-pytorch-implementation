@@ -195,18 +195,11 @@ def train(rssm_model: nn.Module,
                 optim,
                 )
 
-    # reward_model.eval()
-    # encoder.eval()
-    # decoder.eval()
-    # rssm_model.eval()
 
     obs = env.reset()
     action = None
     terminated = False
-    # obs_feat_past = []
-    # actions_past = []
 
-    #episode_states.append(obs.cpu())
     
 
     while terminated == False:
@@ -217,26 +210,6 @@ def train(rssm_model: nn.Module,
             current_state = rssm_model.init_state(obs_feat)
         else:
             current_state = rssm_model.observe_step(obs_feat, current_state['h'], current_state['s'], action.unsqueeze(0))
-        # with torch.no_grad():
-        #     obs_feat = encoder(obs) # shape: (1, obs_feat_dim)
-        #     obs_feat_unsqueezed = obs_feat.unsqueeze(0)
-        #     obs_feat_past.append(obs_feat_unsqueezed)
-        #     obs_feat_past_tensor = torch.cat(obs_feat_past, dim=1)
-        
-        # if action is not None:
-        #     actions_past.append(action.unsqueeze(0).unsqueeze(0))
-        #     actions_past_tensor = torch.cat(actions_past, dim=1)
-        #     with torch.no_grad():
-        #         out = rssm_model.forward_observe(
-        #             obs_feat_past_tensor,
-        #             actions_past_tensor,
-        #         )
-        #         hs = out['hs']
-        #         ss = out['ss']
-        #         cur_state_belief = {'h':torch.unbind(hs, dim=1)[-1], 's':torch.unbind(ss, dim=1)[-1]}
-        # else:
-        #     with torch.no_grad():
-        #         cur_state_belief = rssm_model.init_state(obs_feat)
 
         action = planner(rssm_model, reward_model, current_state, device = device)
         expl_noise_tensor = expl_noise * torch.randn_like(action)
@@ -307,7 +280,7 @@ def eval(
 
         action = planner(rssm_model, reward_model, current_state, device = device)
         y, r, d, t,_ =  env.step(action.cpu().numpy())
-        decoded_pred = decoder(torch.cat([current_state['h'], current_state['s']], dim = -1)).cpu()
+        decoded_pred = decoder(current_state['h']).cpu()
         frames.append((obs[0],decoded_pred[0]))
         pred_reward = reward_model(torch.cat([current_state['h'], current_state['s']], dim = -1)).squeeze().cpu().item()
         predicted_rewards.append(pred_reward)
@@ -355,7 +328,7 @@ def main(cfg):
                       hidden= cfg.hidden_dim).to(device)
     reward_model  = RewardModel(in_dim = cfg.stochastic_dim  + cfg.deter_dim, hidden_dim = cfg.hidden_dim).to(device)
     encoder = ConvEncoder(out_dim = cfg.obs_feat_dim).to(device)
-    decoder = ConvDecoder(in_dim = cfg.stochastic_dim + cfg.deter_dim).to(device)
+    decoder = ConvDecoder(in_dim = cfg.deter_dim).to(device)
 
     optimizer = torch.optim.Adam(
     list(rssm_model.parameters()) +
