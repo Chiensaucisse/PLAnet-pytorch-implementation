@@ -367,7 +367,7 @@ def main(cfg):
 
     populate_random(env, buffer, num_episodes = cfg.S)
 
-    episode_rewards = deque(maxlen = 100)
+    episode_rewards = deque(maxlen = 10)
     writer = SummaryWriter(log_dir="runs/planet_pendulum")
     save_path = "weights/"
     os.makedirs(save_path, exist_ok= True)
