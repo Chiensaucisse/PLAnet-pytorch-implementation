@@ -280,7 +280,7 @@ def eval(
 
         action = planner(rssm_model, reward_model, current_state, device = device)
         y, r, d, t,_ =  env.step(action.cpu().numpy())
-        decoded_pred = decoder(current_state['h']).cpu()
+        decoded_pred = decoder(torch.cat([current_state['h'], current_state['s']], dim = -1)).cpu()
         frames.append((obs[0],decoded_pred[0]))
         pred_reward = reward_model(torch.cat([current_state['h'], current_state['s']], dim = -1)).squeeze().cpu().item()
         predicted_rewards.append(pred_reward)
@@ -328,7 +328,7 @@ def main(cfg):
                       hidden= cfg.hidden_dim).to(device)
     reward_model  = RewardModel(in_dim = cfg.stochastic_dim  + cfg.deter_dim, hidden_dim = cfg.hidden_dim).to(device)
     encoder = ConvEncoder(out_dim = cfg.obs_feat_dim).to(device)
-    decoder = ConvDecoder(in_dim = cfg.deter_dim).to(device)
+    decoder = ConvDecoder(in_dim = cfg.deter_dim + cfg.stochastic_dim).to(device)
 
     optimizer = torch.optim.Adam(
     list(rssm_model.parameters()) +

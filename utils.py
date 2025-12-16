@@ -132,16 +132,15 @@ def compute_losses(rssm_out: dict,
     latent_feats = torch.cat([hs, ss], dim = -1) # (B, L, H + S)
     B, L, D = latent_feats.shape
     squeeze_latent = latent_feats.view(B*L, -1)
-    hs_squeezed = hs.view(B*L, -1)
-    squeeze_decoded_obs = decoder(hs_squeezed)
+    # hs_squeezed = hs.view(B*L, -1)
+    squeeze_decoded_obs = decoder(squeeze_latent)
     decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
- 
     reconstructed = decoded_obs # torch.sigmoid(decoded_obs)
 
-    # if True:
-    #     plot_reconstructed(reconstructed, observation_images)
+    rec_back = decoder(rssm_out['b_feats'].view(B*L, -1)).view(B, L, 3, 64, 64)
 
-    reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
+    reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean() 
+    + F.mse_loss(rec_back, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
     reconstruction_loss *=  recon_weight
     
     reward_preds = reward_model(squeeze_latent).view(B,L)
@@ -162,8 +161,8 @@ def compute_losses(rssm_out: dict,
     kl = torch.clamp(kl - kl_free_nats, min = 0.0)
     loss_kl_dynamics = kl.mean() * kl_scale
 
-    # Smooth | Filter
-    kl  = kl_divergence_diag(mu_qs_smooth, std_qs_smooth, mu_qs_filter, std_qs_filter)
+    # # Smooth | Filter
+    kl  = kl_divergence_diag(mu_qs_smooth.detach(), std_qs_smooth.detach(), mu_qs_filter, std_qs_filter)
     kl = torch.clamp(kl - kl_free_nats, min = 0.0)
     loss_kl_distillation = kl.mean() * kl_scale
 
@@ -174,7 +173,7 @@ def compute_losses(rssm_out: dict,
     futur_loss = F.mse_loss(pred_b, target_b).sum()
     futur_loss *= futur_weight
 
-    total_loss = reconstruction_loss + reward_loss + loss_kl_distillation + loss_kl_dynamics + futur_loss
+    total_loss = reconstruction_loss + reward_loss  + loss_kl_dynamics  + loss_kl_distillation + futur_loss
 
     return {
         "total_loss": total_loss,
@@ -182,7 +181,7 @@ def compute_losses(rssm_out: dict,
         "reward_loss": reward_loss.item(),
         "kl_loss_dynamics": loss_kl_dynamics.item(),
         "kl_loss_distillation": loss_kl_distillation.item(),
-        'futur_loss': futur_loss.item(),
+        # 'futur_loss': futur_loss.item(),
     }
 
 

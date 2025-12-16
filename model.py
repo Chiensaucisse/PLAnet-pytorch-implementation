@@ -114,9 +114,14 @@ class RSSM(nn.Module):
              batch_first= True
         )
         self.futur_pred_head = nn.Sequential(
-            nn.Linear(stochastic_size, hidden),
+            nn.Linear(stochastic_size + deter_size, hidden),
             nn.ReLU(),
             nn.Linear(hidden, deter_size),
+        )
+        self.backward_feat_adapter = nn.Sequential(
+            nn.Linear(deter_size, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, deter_size + stochastic_size),
         )
 
         self.to_next_s = nn.Linear(stochastic_size, stochastic_size)
@@ -140,6 +145,10 @@ class RSSM(nn.Module):
                 smooth_input = torch.cat([obs_feat, h, b], dim = 1)
                 mu_q_smooth, std_q_smooth = self.get_dist(self.post_net_smoothing(smooth_input))
                 s = reparameterize(mu_q_smooth, std_q_smooth)
+                # filter_input = torch.cat([obs_feat, h], dim = 1)
+                # mu_q_filter, std_q_filter = self.get_dist(self.post_net_filtering(filter_input))
+                # s = reparameterize(mu_q_filter, std_q_filter)
+                b_feat = self.backward_feat_adapter(b)
         
             else:
                 filter_input = torch.cat([obs_feat, h], dim = 1)
@@ -175,8 +184,11 @@ class RSSM(nn.Module):
              smooth_input = torch.cat([obs_feat, h, b], dim = 1)
              mu_q_smooth, std_q_smooth = self.get_dist(self.post_net_smoothing(smooth_input))
              s = reparameterize(mu_q_smooth, std_q_smooth)
+            #  s = reparameterize(mu_q_filter, std_q_filter)
+             b_feat = self.backward_feat_adapter(b)
         
         else:
+             b_feat = None
              mu_q_smooth, std_q_smooth = None, None
              s = reparameterize(mu_q_filter, std_q_filter)
 
@@ -184,7 +196,7 @@ class RSSM(nn.Module):
         
         s_embed = F.relu(self.to_next_s(s))
 
-        pred_b = self.futur_pred_head(s)
+        pred_b = self.futur_pred_head(torch.cat([h, s], dim = 1))
 
         out = {
             'mu_p': mu_p,
@@ -192,12 +204,13 @@ class RSSM(nn.Module):
 
             'mu_q_filter': mu_q_filter,  #student
             'std_q_filter': std_q_filter,
-            'mu_q_smooth': mu_q_filter,
-            'std_q_smooth': std_q_filter, # teacher
+            'mu_q_smooth': mu_q_smooth,
+            'std_q_smooth': std_q_smooth, # teacher
             's': s,
             's_embed': s_embed,
             'h': h,
-            'pred_b': pred_b
+            'pred_b': pred_b,
+            'b_feat': b_feat
         }
 
         return out
@@ -249,7 +262,7 @@ class RSSM(nn.Module):
                 ss = []
                 s_embeds = []
                 hs = []
-                pred_bs, target_bs = [], []
+                pred_bs, target_bs, b_feats = [], [], []
                 # hs.append(prev_h)
                 # ss.append(prev_s)
 
@@ -267,6 +280,7 @@ class RSSM(nn.Module):
                      std_qs_smooth.append(out['std_q_smooth'])
                      pred_bs.append(out['pred_b'])
                      target_bs.append(b)
+                     b_feats.append(out['b_feat'])
                      
                      
                      h = out['h']
@@ -288,7 +302,8 @@ class RSSM(nn.Module):
                      'ss': torch.stack(ss, dim = 1),
                      'hs': torch.stack(hs, dim = 1),
                      'target_bs': torch.stack(target_bs, dim = 1),
-                     'pred_bs': torch.stack(pred_bs, dim = 1)
+                     'pred_bs': torch.stack(pred_bs, dim = 1),
+                     'b_feats': torch.stack(b_feats, dim = 1)
                 }
 
                 return out
