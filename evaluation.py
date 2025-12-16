@@ -125,41 +125,20 @@ def main(cfg):
     encoder = ConvEncoder(out_dim = cfg.obs_feat_dim).to(device)
     decoder = ConvDecoder(in_dim = cfg.stochastic_dim + cfg.deter_dim).to(device)
     load_model(cfg.load_path, rssm_model, reward_model, encoder, decoder, device)
-
-
-    populate_random(env, buffer, num_episodes = cfg.S)
+    print(f"Model loaded")
 
     episode_rewards = deque(maxlen = 100)
-    # writer = SummaryWriter(log_dir="runs/planet_pendulum")
-    # save_path = "weights/"
-    # os.makedirs(save_path, exist_ok= True)
 
-    for step in tqdm(range(cfg.num_train_step), desc= f'Step:'):
-        # ep_reward = plan(
-        #     rssm_model,
-        #     reward_model,
-        #     cfg.R,
-        #     cfg.eps,
-        #     buffer,
-        #     encoder,
-        #     env,
-        #     device
-        # )
-        # episode_rewards.append(ep_reward)
-        
-        # writer.add_scalar(f"Reward/mean_reward",np.mean(episode_rewards), step)
-        if step % 5 == 0:
-            # print(f"Mean reward: {np.mean(episode_rewards)}")
-            # save_model(save_path, rssm_model, reward_model, encoder, decoder)
-            reward_model.eval()
-            encoder.eval()
-            decoder.eval()
-            rssm_model.eval()
-            with torch.no_grad():
-                episode, visu = eval(env, rssm_model, encoder, decoder, reward_model, device)
-                save_videos(visu, save_dir= 'videos')
-            buffer.add_episode(episode)
-            # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
+    reward_model.eval()
+    encoder.eval()
+    decoder.eval()
+    rssm_model.eval()
+    with torch.no_grad():
+        print("Starting evaluation")
+        episode, visu = eval(env, rssm_model, encoder, decoder, reward_model, device)
+        save_videos(visu, save_dir= 'videos')
+    buffer.add_episode(episode)
+
     return 
 
 

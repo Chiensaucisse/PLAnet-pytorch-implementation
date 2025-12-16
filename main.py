@@ -267,7 +267,7 @@ def eval(
     actual_rewards = []
     episode_states  = []
     episode_actions = []
-
+    
     while terminated == False:
         obs = obs.to(device)
         obs = obs.unsqueeze(0)
@@ -280,8 +280,10 @@ def eval(
 
         action = planner(rssm_model, reward_model, current_state, device = device)
         y, r, d, t,_ =  env.step(action.cpu().numpy())
+        out_imagined = rssm_model.imagine_step(current_state['h'], current_state['s'], action.unsqueeze(0))
         decoded_pred = decoder(torch.cat([current_state['h'], current_state['s']], dim = -1)).cpu()
-        frames.append((obs[0],decoded_pred[0]))
+        decoded_imagined = decoder(torch.cat([out_imagined['h'], out_imagined['s']], dim = -1)).cpu()
+        frames.append((obs[0],decoded_pred[0], decoded_imagined[0]))
         pred_reward = reward_model(torch.cat([current_state['h'], current_state['s']], dim = -1)).squeeze().cpu().item()
         predicted_rewards.append(pred_reward)
         actual_rewards.append(r)
