@@ -35,31 +35,6 @@ def get_parser():
 
     return parser
 
-def visualize_episode(env: TorchImageEnv, rssm_model: nn.Module, reward_model: nn.Module, encoder: nn.Module, device = None, R: int = 4) -> None:
-    x = env.reset()
-    env_human = gym.make('Pendulum-v1', render_mode = "human")
-    _,_ = env_human.reset()
-    x = x.to(device)
-    x = x.unsqueeze(0)
-    obs_feat = encoder(x)
-    terminated = False
-
-    while terminated == False:
-        action = planner(rssm_model, reward_model, obs_feat,  device = device)
-        action = torch.clamp(action, min = -2.0, max= 2.0)
-    
-        reward = 0
-        for _ in range(R):
-            env_human.render()
-            y, r, d, t,_ =  env.step(action.cpu().numpy())
-            env_human.step(action.cpu().numpy())
-            
-            reward += r
-            x  = y
-            terminated = d | t 
-            if terminated:
-                break
-    env_human.close()
     
 
 
@@ -118,11 +93,13 @@ def fit_rssm(
     obs_feat = encoder(observations_image_squeezed) # shape: (B*L, obs_feat_dim)
     obs_feat = obs_feat.view(B, L, -1)
 
+    # infere a rollout by infering p(s_t | h_t) and q(s_t | o_t, h_t) for the L time steps
     rssm_out = rssm_model.forward_observe(
         obs_feats= obs_feat,
         actions= actions,
     )
 
+    # compute KL loss and reconstruction loss
     losses = compute_losses(
         rssm_out,
         observations_image,
@@ -130,13 +107,11 @@ def fit_rssm(
         decoder,
         reward_model
     )
-
+    # backpropagation and weights update
     total_loss = losses['total_loss']
     optimizer.zero_grad()
     total_loss.backward()
     optimizer.step()
-
-    # losses['total_loss'] = total_loss.detach()
 
     return losses
 
@@ -180,13 +155,15 @@ def train(rssm_model: nn.Module,
     episode_actions = []
     episode_rewards = []
 
-
+    # train the RSSM for C step
     for _ in range(C):
+        # sample  data from the buffer
         batch = buffer.sample(batch_size, chunk_length= L)
         reward_model.train()
         encoder.train()
         decoder.train()
         rssm_model.train()
+        # fit RSSM
         losses = fit_rssm(rssm_model,
                 reward_model,
                 encoder,
@@ -195,50 +172,26 @@ def train(rssm_model: nn.Module,
                 optim,
                 )
 
-    # reward_model.eval()
-    # encoder.eval()
-    # decoder.eval()
-    # rssm_model.eval()
-
+    # reset the env
     obs = env.reset()
     action = None
     terminated = False
-    # obs_feat_past = []
-    # actions_past = []
-
-    #episode_states.append(obs.cpu())
     
-
+    # infere action through planning until episode is done
     while terminated == False:
         obs = obs.to(device)
         obs = obs.unsqueeze(0)
+        # encode the observation in embedding space
         obs_feat = encoder(obs)
         if action is None:
             current_state = rssm_model.init_state(obs_feat)
         else:
+            # infere: h_t  = f(h_t-1, s_t-1, a_t) -> s_t = q(s_t |o_t, h_t)
             current_state = rssm_model.observe_step(obs_feat, current_state['h'], current_state['s'], action.unsqueeze(0))
-        # with torch.no_grad():
-        #     obs_feat = encoder(obs) # shape: (1, obs_feat_dim)
-        #     obs_feat_unsqueezed = obs_feat.unsqueeze(0)
-        #     obs_feat_past.append(obs_feat_unsqueezed)
-        #     obs_feat_past_tensor = torch.cat(obs_feat_past, dim=1)
-        
-        # if action is not None:
-        #     actions_past.append(action.unsqueeze(0).unsqueeze(0))
-        #     actions_past_tensor = torch.cat(actions_past, dim=1)
-        #     with torch.no_grad():
-        #         out = rssm_model.forward_observe(
-        #             obs_feat_past_tensor,
-        #             actions_past_tensor,
-        #         )
-        #         hs = out['hs']
-        #         ss = out['ss']
-        #         cur_state_belief = {'h':torch.unbind(hs, dim=1)[-1], 's':torch.unbind(ss, dim=1)[-1]}
-        # else:
-        #     with torch.no_grad():
-        #         cur_state_belief = rssm_model.init_state(obs_feat)
 
+        # action derived with CEM
         action = planner(rssm_model, reward_model, current_state, device = device)
+        # exploration noise
         expl_noise_tensor = expl_noise * torch.randn_like(action)
         action  = action + expl_noise_tensor
         action = torch.clamp(action, min = -2.0, max= 2.0)
@@ -247,6 +200,7 @@ def train(rssm_model: nn.Module,
         for _ in range(R):
             y, r, d, t,_ =  env.step(action.cpu().numpy())
             reward += r
+            # termination condition = done or truncated
             terminated = d | t 
             if terminated:
                 break
@@ -343,13 +297,15 @@ def eval(
 
 def main(cfg):
 
+    # init image-based environment
     env = TorchImageEnv('Pendulum-v1')
     device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 
     action_size = env.action_size
     max_capacity = 500
+    # init replay buffer
     buffer = ReplayBuffer(capacity=max_capacity, device= device)
-
+    # init RSSM, reward, encoder and decoder
     rssm_model = RSSM(action_size= action_size, stochastic_size= cfg.stochastic_dim,
                       deter_size = cfg.deter_dim, obs_feat_size= cfg.obs_feat_dim,
                       hidden= cfg.hidden_dim).to(device)
@@ -364,15 +320,17 @@ def main(cfg):
     list(decoder.parameters()),
     lr=cfg.lr
 )
-
+    # populate buffer with random trajectories
     populate_random(env, buffer, num_episodes = cfg.S)
 
+    # average reward on the last 100 episode for monitoring
     episode_rewards = deque(maxlen = 100)
     writer = SummaryWriter(log_dir="runs/planet_pendulum")
     save_path = "weights/"
     os.makedirs(save_path, exist_ok= True)
 
     for step in tqdm(range(cfg.num_train_step), desc= f'Step:'):
+        # train the model and populate the buffer using the model for planning
         losses, ep_reward = train(
             rssm_model,
             reward_model,
@@ -406,10 +364,10 @@ def main(cfg):
             decoder.eval()
             rssm_model.eval()
             with torch.no_grad():
+                # evaluate the model and store in the buffer
                 episode, visu = eval(env, rssm_model, encoder, decoder, reward_model, device)
                 save_videos(visu, save_dir= 'videos')
             buffer.add_episode(episode)
-            # visualize_episode(env, rssm_model=rssm_model, reward_model = reward_model, encoder= encoder, device= device)
 
 
 

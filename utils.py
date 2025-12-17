@@ -48,34 +48,6 @@ def postprocess_img(image, depth):
     image = np.floor((image + 0.5) * 2 ** depth)
     return np.clip(image * 2**(8 - depth), 0, 2**8 - 1).astype(np.uint8)
 
-def plot_reconstructed(renconstructed_img, tgt_image):
-
-    idx = 0
-    recon_seq = renconstructed_img[idx].detach().cpu()
-    target_seq = tgt_image[idx].detach().cpu()
-    L = recon_seq.shape[0]
-
-   
-    fig, axs = plt.subplots(2, L, figsize=(3 * L, 6))
-
-    for t in range(L):
-     
-        recon_np = recon_seq[t].permute(1, 2, 0).numpy()
-        target_np = target_seq[t].permute(1, 2, 0).numpy()
-        
-    
-        axs[0, t].imshow(target_np)
-        axs[0, t].set_title(f"Target t={t}")
-        axs[0, t].axis("off")
-        
-        axs[1, t].imshow(recon_np)
-        axs[1, t].set_title(f"Recon t={t}")
-        axs[1, t].axis("off")
-
-    plt.tight_layout()
-    plt.savefig(f"debug/reconstruction_seq_batch{idx}.png", bbox_inches="tight", dpi=300)
-    plt.close(fig)
-
 
 
 def save_videos(visu, save_dir="videos", fps=15):
@@ -134,10 +106,7 @@ def compute_losses(rssm_out: dict,
     squeeze_decoded_obs = decoder(squeeze_latent)
     decoded_obs = squeeze_decoded_obs.view(B, L, 3, 64, 64)
  
-    reconstructed = decoded_obs # torch.sigmoid(decoded_obs)
-
-    # if True:
-    #     plot_reconstructed(reconstructed, observation_images)
+    reconstructed = decoded_obs 
 
     reconstruction_loss  = F.mse_loss(reconstructed, observation_images[:,1:], reduction = 'none').sum([2,3,4]).mean()
     reconstruction_loss *=  recon_weight
